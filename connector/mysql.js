@@ -4,22 +4,22 @@ const envFilePath = path.resolve(__dirname, `../cron/.env`);
 const logger = require('../logger/logger')
 require('dotenv').config({ path: envFilePath });
 
-const mySqlProdDBConfig = {
-    host: process.env.MYSQL_HOST_SOURCE,
-    port: process.env.MYSQL_PORT_SOURCE,
-    user: process.env.MYSQL_USER_SOURCE,
-    password: process.env.MYSQL_PASSWORD_SOURCE,
-    database: process.env.MYSQL_DATABASE_SOURCE,
-    connectionLimit: process.env.CONNECTION_LIMIT_SOURCE
+const mySqlLoanTapeDbConfig = {
+    host: process.env.MYSQL_HOST_LOAN_TAPE,
+    port: process.env.MYSQL_PORT_LOAN_TAPE,
+    user: process.env.MYSQL_USER_LOAN_TAPE,
+    password: process.env.MYSQL_PASSWORD_LOAN_TAPE,
+    database: process.env.MYSQL_DATABASE_LOAN_TAPE,
+    connectionLimit: process.env.CONNECTION_LIMIT_LOAN_TAPE
 }
 
-const mySqlLoanTapeDbConfig = {
-    host: process.env.MYSQL_HOST_DESTINATION,
-    port: process.env.MYSQL_PORT_DESTINATION,
-    user: process.env.MYSQL_USER_DESTINATION,
-    password: process.env.MYSQL_PASSWORD_DESTINATION,
-    database: process.env.MYSQL_DATABASE_DESTINATION,
-    connectionLimit: process.env.CONNECTION_LIMIT_DESTINATION
+const mySqlProdDBConfig = {
+    host: process.env.MYSQL_HOST_PROD,
+    port: process.env.MYSQL_PORT_PROD,
+    user: process.env.MYSQL_USER_PROD,
+    password: process.env.MYSQL_PASSWORD_PROD,
+    database: process.env.MYSQL_DATABASE_PROD,
+    connectionLimit: process.env.CONNECTION_LIMIT_PROD
 }
 
 const prodDbPool = mysql.createPool(mySqlProdDBConfig)
@@ -41,7 +41,20 @@ const _mysql = {
     });
   },
 
-
+  beginTransaction: async function (conn) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const beginTransaction = util.promisify(conn.beginTransaction).bind(conn);
+        await beginTransaction();
+        conn.inTransaction = true;
+        resolve(conn);
+      } catch (error) {
+        conn.release();
+        logger.error("Error occured in beginTransaction:", error)
+        reject(error);
+      }
+    });
+  },
 
   query: async function (queryStr, params = [], location = '') {
     return new Promise(async (resolve, reject) => {
@@ -73,6 +86,39 @@ const _mysql = {
       }
     });
   },
+
+    
+  commit: async function (conn) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const commit = util.promisify(conn.commit).bind(conn);
+        await commit();
+        conn.inTransaction = false;
+        conn.release();
+        resolve();
+      } catch (error) {
+        logger.error("Error occured in commit function:", error)
+        await this.rollback(conn);
+        reject(error);
+      }
+    });
+  },
+
+
+  rollback: async function (conn) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const rollback = util.promisify(conn.rollback).bind(conn);
+        let res = await rollback();
+        conn.inTransaction = false;
+        conn.release();
+        resolve(res);
+      } catch (error) {
+        logger.error("Error occured in rollback function:", error)
+        reject(error);
+      }
+    });
+  }
 };
 
 module.exports = _mysql

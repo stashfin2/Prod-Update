@@ -64,7 +64,7 @@ const processJob = async () => {
         process.exit(0);
     } catch (error) {
         logger.error("Error while initiating the amortization process");
-        handleError(error);
+        
     }
 };
 

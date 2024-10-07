@@ -18,7 +18,7 @@ const processJob = async () => {
         if (conn) conn.release();
     } catch (error) {
         logger.error('Error while initiating the amortization process:', error);
-        handleError(error);
+        
     }
 };
 

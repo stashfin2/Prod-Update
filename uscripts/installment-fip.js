@@ -14,7 +14,7 @@ const processJob = async () => {
         process.exit(0);
     } catch (error) {
         logger.error("Error while initiating the amortization process");
-        handleError(error);
+        
     }
 };
 
@@ -50,21 +50,26 @@ const createProcessStream = () =>
 
 const getAndInsertInstallmentfip = (data) =>{
     return new Promise(async (resolve, reject) => {
+        let connection = await mysql.getConnections('prod')
+        connection = await mysql.beginTransaction(connection)
         try{
             const loanIds = data.map((each)=> each.loan_id)
             const loanIdString = loanIds.join(',')
             const loanTapeInstallments = await getInstallments(loanIdString)
             const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString)
             const insertOp = await insertInstallments(loanIdString)
-            await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp]).then((res) => {
+            await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp]).then(async (res) => {
                 logger.info(`Successfully performed all the operations and starting with another batch`)
+                await mysql.rollback(connection)
                 resolve()
-            }).catch((error) => {
+            }).catch(async (error) => {
                 logger.error(`Error while performing all the operations:`, error)
+                await mysql.rollback(connection)
                 reject()
             })
         }catch(error){
             logger.error(`Error while getting and inserting in installmentfip:`,error)
+            await mysql.rollback(connection)
             reject(error)
         }
     })
