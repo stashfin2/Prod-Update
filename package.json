@@ -1,0 +1,23 @@
+{
+  "name": "prod-update",
+  "version": "1.0.0",
+  "description": "These are scripts to update multiple tables in prod",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Shivam Sharma",
+  "license": "ISC",
+  "dependencies": {
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "date-fns": "^3.6.0",
+    "decimal.js": "^10.4.3",
+    "dotenv": "^16.4.5",
+    "moment": "^2.30.1",
+    "mysql": "^2.18.1",
+    "mysql2": "^3.10.1",
+    "winston": "^3.13.0",
+    "workerpool": "^9.1.3"
+  }
+}
