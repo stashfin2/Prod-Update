@@ -74,11 +74,12 @@ const startOperations = async (data) =>{
             }
         }
         const paymentsArray = createPaymentInst(installmentPaymentPifInsertionArray)
-        const deleteStatus = await deleteInstallmentsFromProd(loanIdString)
+        await deleteInstallmentsFromProd(loanIdString)
         const result = await insertPaymentsArray(paymentsArray, loanIdString)
         return result
     }catch(error){
-
+        logger.error(`Error while performing the combined operation in installment-payment-pif table:`, error)
+        throw error
     }
 }
 
@@ -143,125 +144,168 @@ const generatePayments = (bucketAmount, payment, installments, table, col, instN
 
     } catch (error) {
         if(col === 'col'){
-            logger.error("Error while generating payments for colenders>>>>")
+            logger.error("Error while generating payments for installment_payment_pif table for colenders>>>>", error)
         }else{
-            logger.error("Error while generating payments for cutomer facing>>>>")
+            logger.error("Error while generating payments for installment_payment_fip table fotcutomer facing>>>>", error)
         }
-       logger.error(`Error occured while generating payments array:`,error)
+       logger.error(`Error occured while generating payments for installment_payment_pif table for array:`,error)
+       throw error
     }
 }
 
 
+
 const sortByInstDateAndNumber = (arr) => {
-    return arr.sort((a, b) => {
-      const dateComparison = new Date(a.inst_date) - new Date(b.inst_date);
-      if (dateComparison !== 0) {
-        return dateComparison;
-      }
-      return a.inst_number - b.inst_number;
-    });
+    try {
+        return arr.sort((a, b) => {
+            const dateComparison = new Date(a.inst_date) - new Date(b.inst_date);
+            if (dateComparison !== 0) {
+                return dateComparison;
+            }
+            return a.inst_number - b.inst_number;
+        });
+    } catch (error) {
+        logger.error(`Error while sorting installments by number for installment_payment_pif table :`, error)
+        logger.error('Array in which the error occured:', JSON.stringify(arr))
+        throw error
+    }
 }
 
 
 const calculatePricipal = ( principal, payment, bucketAmount, table) => {
-    let commonIpInsObject = {}
-    let availableBalancePrincipal = bucketAmount
-    let outstandingPrincipal = principal['amount_outstanding_principal']
-    if (outstandingPrincipal > 0) {
-        availableBalancePrincipal = availableBalancePrincipal - outstandingPrincipal
-        if (availableBalancePrincipal >= 0){
-            let recievedPrincipal = principal['inst_principal']
-            principal['received_principal'] = recievedPrincipal
-            principal['amount_outstanding_principal'] = 0
-            principal['last_paying_date'] = payment['received_date']
-            principal['updated'] = true
-            if(table === 'fip'){
-                principal['emi_status_id']  = 2
+    try{
+        let commonIpInsObject = {}
+        let availableBalancePrincipal = bucketAmount
+        let outstandingPrincipal = principal['amount_outstanding_principal']
+        if (outstandingPrincipal > 0) {
+            availableBalancePrincipal = availableBalancePrincipal - outstandingPrincipal
+            if (availableBalancePrincipal >= 0){
+                let recievedPrincipal = principal['inst_principal']
+                principal['received_principal'] = recievedPrincipal
+                principal['amount_outstanding_principal'] = 0
+                principal['last_paying_date'] = payment['received_date']
+                principal['updated'] = true
+                if(table === 'fip'){
+                    principal['emi_status_id']  = 2
+                }
+                commonIpInsObject = createInsertionObject(principal, outstandingPrincipal,payment, 'pri')
+                bucketAmount = bucketAmount - outstandingPrincipal
+            } else {
+    
+                let recievedPrincipal = bucketAmount + principal['received_principal']
+                let outstandingAmountPrincipal = principal['amount_outstanding_principal'] - bucketAmount;
+                principal['received_principal'] = recievedPrincipal
+                principal['amount_outstanding_principal'] = outstandingAmountPrincipal
+                principal['last_paying_date'] = payment['received_date']
+                 principal['updated'] = true
+                commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'pri')
+                bucketAmount = 0
             }
-            commonIpInsObject = createInsertionObject(principal, outstandingPrincipal,payment, 'pri')
-            bucketAmount = bucketAmount - outstandingPrincipal
-        } else {
-
-            let recievedPrincipal = bucketAmount + principal['received_principal']
-            let outstandingAmountPrincipal = principal['amount_outstanding_principal'] - bucketAmount;
-            principal['received_principal'] = recievedPrincipal
-            principal['amount_outstanding_principal'] = outstandingAmountPrincipal
-            principal['last_paying_date'] = payment['received_date']
-             principal['updated'] = true
-            commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'pri')
-            bucketAmount = 0
         }
+        return [principal, commonIpInsObject, bucketAmount]
+    }catch(error){
+        logger.error(`Error while calculating the pricipal payments in installment_payment_pif table:`, error)
+        logger.error("Creds>>>>>>>>>>>>>>>>>>>>>>>>>>:")
+        logger.error("principal>>>>", JSON.stringify(principal))
+        logger.error("payment>>>>>>",JSON.stringify(payment))
+        logger.error("bucketAmout>>>", bucketAmount)
+        throw error
     }
-    return [principal, commonIpInsObject, bucketAmount]
 }
+
 
 
 const calculateInterest =(principal, payment, bucketAmount, table) => {
-    let availableBalanceInterest = bucketAmount
-    let outstandingInterest = principal['amount_outstanding_interest']
-    let commonIpInsObject = {}
-    if (outstandingInterest > 0) {
-        availableBalanceInterest = availableBalanceInterest - outstandingInterest
-        if (availableBalanceInterest >= 0) {
-            let recievedInterest = principal['inst_interest']
-            principal['received_interest'] =  recievedInterest,
-            principal['amount_outstanding_interest'] = 0
-            principal['last_paying_date'] = payment['received_date']
-            principal['updated'] = true
-            if(table === 'pif'){
-                principal['emi_status_id'] =  2
+    try{
+        let availableBalanceInterest = bucketAmount
+        let outstandingInterest = principal['amount_outstanding_interest']
+        let commonIpInsObject = {}
+        if (outstandingInterest > 0) {
+            availableBalanceInterest = availableBalanceInterest - outstandingInterest
+            if (availableBalanceInterest >= 0) {
+                let recievedInterest = principal['inst_interest']
+                principal['received_interest'] =  recievedInterest,
+                principal['amount_outstanding_interest'] = 0
+                principal['last_paying_date'] = payment['received_date']
+                principal['updated'] = true
+                if(table === 'pif'){
+                    principal['emi_status_id'] =  2
+                }
+                commonIpInsObject = createInsertionObject(principal, outstandingInterest, payment, 'int')
+                bucketAmount = bucketAmount - outstandingInterest
+            } else {
+                let receivedInterest = bucketAmount + principal['received_interest'] 
+                let outstandingAmountInterst = principal['amount_outstanding_interest'] - bucketAmount
+                principal['received_interest'] = receivedInterest
+                principal['amount_outstanding_interest'] = outstandingAmountInterst
+                principal['last_paying_date'] =  payment['received_date']
+                principal['updated'] = true
+                commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'int')
+                bucketAmount = 0
             }
-            commonIpInsObject = createInsertionObject(principal, outstandingInterest, payment, 'int')
-            bucketAmount = bucketAmount - outstandingInterest
-        } else {
-            let receivedInterest = bucketAmount + principal['received_interest'] 
-            let outstandingAmountInterst = principal['amount_outstanding_interest'] - bucketAmount
-            principal['received_interest'] = receivedInterest
-            principal['amount_outstanding_interest'] = outstandingAmountInterst
-            principal['last_paying_date'] =  payment['received_date']
-            principal['updated'] = true
-            commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'int')
-            bucketAmount = 0
         }
+    
+        return [principal, commonIpInsObject, bucketAmount]
+    }catch(error){
+        logger.error(`Error while calculating the INTEREST payments in installment_payment_pif table:`, error)
+        logger.error("Creds>>>>>>>>>>>>>>>>>>>>>>>>>>:")
+        logger.error("principal>>>>", JSON.stringify(principal))
+        logger.error("payment>>>>>>",JSON.stringify(payment))
+        logger.error("bucketAmout>>>", bucketAmount)
+        throw error
     }
-
-    return [principal, commonIpInsObject, bucketAmount]
 }
+
 
 
 
 const createInsertionObject = (principal,amount, payment, type) => {
-    let commonIpInsObject = {
-        'customer_id': principal['customer_id'],
-        'loan_id': principal['loan_id'],
-        'inst_id': principal['id'],
-        'inst_number': principal['inst_number'],
-        'code_payment_type': type === 'pri' ? 2 : 3,
-        'amount_payment': amount,
-        'payment_status': 1,
-        'payment_pairing_date': new Date(),
-        'payment_date': payment['received_date'],
-        'payment_id': payment['id']
+    try {
+        let commonIpInsObject = {
+            'customer_id': principal['customer_id'],
+            'loan_id': principal['loan_id'],
+            'inst_id': principal['id'],
+            'inst_number': principal['inst_number'],
+            'code_payment_type': type === 'pri' ? 2 : 3,
+            'amount_payment': amount,
+            'payment_status': 1,
+            'payment_pairing_date': new Date(),
+            'payment_date': payment['received_date'],
+            'payment_id': payment['id']
+        }
+        return commonIpInsObject
+    } catch (error) {
+        logger.error(`Error while calculating the pricipal payments in installment_payment_pif table:`, error)
+        logger.error("Creds>>>>>>>>>>>>>>>>>>>>>>>>>>:")
+        logger.error("principal>>>>", JSON.stringify(principal))
+        logger.error("payment>>>>>>", JSON.stringify(payment))
+        logger.error("bucketAmout>>>", bucketAmount)
+        throw error
     }
-    return commonIpInsObject
 }
 
 const mergeArrays = (array1, array2) => {
-    const map = new Map()
-    array1.forEach(obj => {
-        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
-        map.set(key, obj)
-    });
-    array2.forEach(obj => {
-        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
-        if (map.has(key)) {
-            const index = array2.findIndex(o => o.id === obj.id && o.inst_number === obj.inst_number && o.inst_date === obj.inst_date)
-            array2[index] = map.get(key);
-        }
-    });
-    return array2
+    try{
+        const map = new Map()
+        array1.forEach(obj => {
+            const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+            map.set(key, obj)
+        });
+        array2.forEach(obj => {
+            const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+            if (map.has(key)) {
+                const index = array2.findIndex(o => o.id === obj.id && o.inst_number === obj.inst_number && o.inst_date === obj.inst_date)
+                array2[index] = map.get(key);
+            }
+        });
+        return array2
+    }catch(error){
+        logger.error(`Error occured while merging two arrays:`,error)
+        console.log("array1>>>>>>>>>>>>>>", JSON.stringify(array1))
+        console.log("array2>>>>>>>>>>>>>>",JSON.stringify(array2))
+        throw error
+    }
 }
-
 const insertPaymentsArray = async (paymentsArray, loanIdString) => {
     try{
         logger.info('Initializing the insertion process in the installment_payment_pif table.')
