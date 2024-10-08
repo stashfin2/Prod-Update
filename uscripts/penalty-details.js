@@ -12,7 +12,7 @@ const processJob = async () => {
         await pipeline(dataStream, batchStream, createProcessStream());
         process.exit(0);
     } catch (error) {
-        logger.error("Error while initiating the amortization process");
+        logger.error("Error in processing the penalty-details: ", error);
         
     } finally {
         if (conn) conn.release();
@@ -40,7 +40,7 @@ const createProcessStream = () => new Transform({
     objectMode: true,
     async transform(data, encoding, callback) {
         try {
-            await getAndUpdatePayments(data);
+            await getAndUpdatePenalty(data);
         } catch (error) {
             logger.error("Error in processing payments: ", error);
         }
@@ -48,7 +48,7 @@ const createProcessStream = () => new Transform({
     }
 });
 
-const getAndUpdatePayments = async (data) => {
+const getAndUpdatePenalty = async (data) => {
     const loanIds = data.map(item => item.loan_id).join(',');
     try {
         const loanTapePenalties = await mysql.query(

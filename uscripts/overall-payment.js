@@ -4,11 +4,15 @@ const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
 const logger = require("../logger/logger");
 
+let batchCount = 0
+let inProgressCount = 0
+let dataCount = 0
+
 const processJob = async () => {
     let conn;
     try {
         conn = await mysql.getConnections();
-        const dataStream = conn.query('SELECT * FROM st_ksf_customer').stream();
+        const dataStream = conn.query('SELECT * FROM st_ksf_customer where loan_id = 417638').stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         process.exit(0);
     } catch (error) {
@@ -22,19 +26,36 @@ const processJob = async () => {
 const batchStream = new Transform({
     objectMode: true,
     transform(chunk, encoding, callback) {
-        this.buffer = (this.buffer || []).concat(chunk);
-        if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
-            logger.info(`Processing batch with size: ${this.buffer.length}`);
-            this.push(this.buffer);
-            this.buffer = [];
+        try {
+            this.buffer = this.buffer || [];
+            this.buffer = this.buffer.concat(chunk);
+            if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
+                dataCount = dataCount + this.buffer.length;
+                batchCount = batchCount + 1;
+                logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
+                this.push(this.buffer);
+                this.buffer = [];
+            }
+
+            callback(); // Proceed to the next chunk
+        } catch (error) {
+            logger.error("Error in the transform function: ", error);
+            callback(error); // Pass the error to the callback
         }
-        callback();
     },
     flush(callback) {
-        if (this.buffer.length > 0) this.push(this.buffer);
-        callback();
-    }
+        try {
+            if (this.buffer && this.buffer.length > 0) {
+                this.push(this.buffer);
+            }
+            callback(); 
+        } catch (error) {
+            logger.error("Error in the flush function: ", error);
+            callback(error);
+        }
+    },
 });
+
 
 const createProcessStream = () => new Transform({
     objectMode: true,
@@ -44,21 +65,22 @@ const createProcessStream = () => new Transform({
         } catch (error) {
             logger.error("Error in processing payments: ", error);
         }
-        callback();
+    //    callback();
     }
 });
 
 const getAndUpdatePayments = async (data) => {
     const loanIds = data.map(item => item.loan_id).join(',');
+    // let connection = await mysql.getConnections('prod')
+    // connection = await mysql.beginTransaction(connection)
     try {
         const loanTapePayments = await mysql.query(
-            `SELECT * FROM overall_payment WHERE loan_id IN (${loanIds}) ORDER BY id DESC`, 
+            `SELECT * FROM overall_payment WHERE loan_id IN (${loanIds}) ORDER BY id asc`, 
             [], 
             'loan-tape'
         );
-        await deleteDataFromOverallPayment(loanIds);
+        await deleteDataFromOverallPayment(loanIds, {});
         const paymentsData = createOverallPaymentCompatibleArray(loanTapePayments);
-        
         logger.info('Starting insertion into overall_payment table');
         const result = await mysql.query(
             `INSERT INTO overall_payment (customer_id, loan_id, amt_payment, received_date, cheque_number, urm_no, payment_channel, transaction_id, ref_no, utr_no, neft_bank, presentation_status, bounce_reason, presentation_date, create_date, extra_amount, extra_amount_pif, remarks, add_user_id, update_user_id, is_delete, is_refund, update_date, transaction_commit_status) VALUES ?`,
@@ -66,16 +88,18 @@ const getAndUpdatePayments = async (data) => {
             'prod'
         );
         logger.info(`Inserted ${result.affectedRows} rows into overall_payment table`);
+        // await mysql.rollback(connection)
         return result;
     } catch (error) {
         logger.error("Error while getting and updating payments: ", error);
+        // await mysql.rollback(connection)
         throw error;
     }
 };
 
-const deleteDataFromOverallPayment = async (loanIds) => {
+const deleteDataFromOverallPayment = async (loanIds, connection) => {
     try {
-        logger.info(`Deleting loans with loan_ids: ${loanIds}`);
+        logger.info(`Deleting payments with loan_ids: ${loanIds}`);
         const result = await mysql.query(
             `DELETE FROM overall_payment WHERE loan_id IN (${loanIds})`, 
             [], 
@@ -84,7 +108,7 @@ const deleteDataFromOverallPayment = async (loanIds) => {
         logger.info(`Deleted ${result.affectedRows} rows from overall_payment table`);
         return result;
     } catch (error) {
-        logger.error("Error deleting payments: ", error);
+        logger.error("Error deleting payments from overall_payments table: ", error);
         throw error;
     }
 };

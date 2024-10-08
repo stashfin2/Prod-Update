@@ -1,8 +1,9 @@
 const mysql = require("mysql2");
+const util = require("util")
 const path = require('path');
-const envFilePath = path.resolve(__dirname, `../cron/.env`);
+const envFilePath = path.resolve(__dirname, `../connector/.env`);
 const logger = require('../logger/logger')
-require('dotenv').config({ path: envFilePath });
+require('dotenv').config({path:envFilePath});
 
 const mySqlLoanTapeDbConfig = {
     host: process.env.MYSQL_HOST_LOAN_TAPE,
@@ -10,7 +11,7 @@ const mySqlLoanTapeDbConfig = {
     user: process.env.MYSQL_USER_LOAN_TAPE,
     password: process.env.MYSQL_PASSWORD_LOAN_TAPE,
     database: process.env.MYSQL_DATABASE_LOAN_TAPE,
-    connectionLimit: process.env.CONNECTION_LIMIT_LOAN_TAPE
+    connectionLimit: process.env.MYSQL_CONNECTION_LIMIT_LOAN_TAPE
 }
 
 const mySqlProdDBConfig = {
@@ -19,7 +20,7 @@ const mySqlProdDBConfig = {
     user: process.env.MYSQL_USER_PROD,
     password: process.env.MYSQL_PASSWORD_PROD,
     database: process.env.MYSQL_DATABASE_PROD,
-    connectionLimit: process.env.CONNECTION_LIMIT_PROD
+    connectionLimit: process.env.MYSQL_CONNECTION_LIMIT_PROD
 }
 
 const prodDbPool = mysql.createPool(mySqlProdDBConfig)
@@ -56,10 +57,10 @@ const _mysql = {
     });
   },
 
-  query: async function (queryStr, params = [], location = '') {
+  query: async function (queryStr, params = [], location = '', conn = {}) {
     return new Promise(async (resolve, reject) => {
       try {
-        const conn = await this.getConnections(location)
+        conn = Object.keys(conn).length === 0 ? await this.getConnections(location) : conn
         if(params.length > 0 && Array.isArray(params[0])){
           params = [params[0]]
         }

@@ -4,17 +4,20 @@ const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
 const logger = require("../logger/logger");
 
-
+let batchCount = 0
+let inProgressCount = 0
+let dataCount = 0
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from st_ksf_customer', []).stream();
-        await pipeline(dataStream, batchStream, createProcessStream(companyEntity));
+        const dataStream = conn.query('select * from st_ksf_customer where loan_id = 417638', []).stream();
+        await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
     } catch (error) {
-        logger.error("Error while initiating the amortization process");
-        
+        logger.error("Error while initiating the insertion process in installmentfip:",error);
+        throw error
+
     }
 };
 
@@ -22,21 +25,36 @@ const processJob = async () => {
 const batchStream = new Transform({
     objectMode: true,
     transform(chunk, encoding, callback) {
-        this.buffer = (this.buffer || []).concat(chunk);
-        if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
-            dataCount = dataCount + this.buffer.length;
-            batchCount = batchCount + 1;
-            logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
-            this.push(this.buffer);
-            this.buffer = [];
+        try {
+            this.buffer = this.buffer || [];
+            this.buffer = this.buffer.concat(chunk);
+            if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
+                dataCount = dataCount + this.buffer.length;
+                batchCount = batchCount + 1;
+                logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
+                this.push(this.buffer);
+                this.buffer = [];
+            }
+
+            callback();
+        } catch (error) {
+            logger.error("Error in the transform function: ", error);
+            callback(error); // Pass the error to the callback
         }
-        callback();
     },
     flush(callback) {
-        if (this.buffer.length > 0) this.push(this.buffer);
-        callback();
+        try {
+            if (this.buffer && this.buffer.length > 0) {
+                this.push(this.buffer);
+            }
+            callback(); 
+        } catch (error) {
+            logger.error("Error in the flush function: ", error);
+            callback(error);
+        }
     },
 });
+
 
 const createProcessStream = () =>
     new Transform({
@@ -50,37 +68,37 @@ const createProcessStream = () =>
 
 const getAndInsertInstallmentfip = (data) =>{
     return new Promise(async (resolve, reject) => {
-        let connection = await mysql.getConnections('prod')
-        connection = await mysql.beginTransaction(connection)
+        // let connection = await mysql.getConnections('prod')
+        // connection = await mysql.beginTransaction(connection)
         try{
             const loanIds = data.map((each)=> each.loan_id)
             const loanIdString = loanIds.join(',')
             const loanTapeInstallments = await getInstallments(loanIdString)
-            const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString)
-            const insertOp = await insertInstallments(loanIdString)
+            const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString, {})
+            const insertOp = await insertInstallments(loanTapeInstallments, {})
             await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp]).then(async (res) => {
                 logger.info(`Successfully performed all the operations and starting with another batch`)
-                await mysql.rollback(connection)
+                // await mysql.rollback(connection)
                 resolve()
             }).catch(async (error) => {
                 logger.error(`Error while performing all the operations:`, error)
-                await mysql.rollback(connection)
+                // await mysql.rollback(connection)
                 reject()
             })
         }catch(error){
             logger.error(`Error while getting and inserting in installmentfip:`,error)
-            await mysql.rollback(connection)
+            // await mysql.rollback(connection)
             reject(error)
         }
     })
 }
 
-const deleteInstallmentsFromProd = (loanIdString) => {
+const deleteInstallmentsFromProd = (loanIdString, conn) => {
     return new Promise(async (resolve, reject ) => {
         try{
             logger.info('Initiating the installments deletion process from installment_fip table in the production database')
             const deleteDataFromProd =  `DELETE FROM installment_fip WHERE loan_id in (${loanIdString})`
-            const deleteOp = await mysql.query(deleteDataFromProd, [], 'prod')
+            const deleteOp = await mysql.query(deleteDataFromProd, [], 'prod', conn)
             logger.info(`Successfully completed the installments deletion process from the production database`)
             resolve(deleteOp)
         }catch(error){
@@ -95,7 +113,7 @@ const getInstallments = (loanIdString) => {
     return new Promise(async(resolve , reject) => {
         try{
             logger.info(`Getting the installments from the Loan-Tape database for inserting`)
-            const loanTapeInstallments = await mysql.query(`Select * from installment_fip where loan_id in (${loanIdString})`, [], 'loan-tape')
+            const loanTapeInstallments = await mysql.query(`Select * from installment_fip where loan_id in (${loanIdString}) and is_delete = 0`, [], 'loan-tape')
             logger.info(`Got the installments from the Loan-Tape database`)
             resolve(loanTapeInstallments)
         }catch(error){
@@ -106,7 +124,7 @@ const getInstallments = (loanIdString) => {
     })
 }
 
-const insertInstallments = (loanTapeInstallments) => {
+const insertInstallments = (loanTapeInstallments, conn) => {
     return new Promise(async (resolve, reject) => {
         try{
             const insertInstallmentsQuery = `INSERT INTO installment_fip (
@@ -117,7 +135,7 @@ const insertInstallments = (loanTapeInstallments) => {
                 foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
                 amort_adjusment, payment_id, cashback, version) VALUES ?`
             const installments = mapDataToInsertArray(loanTapeInstallments)
-            const insertOp = await mysql.query(insertInstallmentsQuery, [installments], 'prod')
+            const insertOp = await mysql.query(insertInstallmentsQuery, [installments], 'prod',conn)
             resolve(insertOp)
         }catch(error){
             logger.error(`Error while inserting the installments in the prod database:`, error)
@@ -126,7 +144,7 @@ const insertInstallments = (loanTapeInstallments) => {
     })
 }
 
-const mapDataToInsertArray = (data) => {
+const mapDataToInsertArray = (instalments) => {
     try{
         const valueArrays = instalments.map((data) => [
             data.entity_id,
@@ -167,7 +185,7 @@ const mapDataToInsertArray = (data) => {
         ])
         return valueArrays
     }catch(error){
-        logger.error(`Error while creating the installments compatible array:`, error)
+        logger.error(`Error while creating the installments compatible array for installment-fip table:`, error)
         throw error
     }
 };

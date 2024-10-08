@@ -9,7 +9,7 @@ const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
         const dataStream = conn.query('select * from st_ksf_customer', []).stream();
-        await pipeline(dataStream, batchStream, createProcessStream(companyEntity));
+        await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
     } catch (error) {
@@ -53,10 +53,9 @@ const startOperations = async (data) =>{
     try{
         const loanIds = data.map((each)=> each.loan_id)
         const loanIdString = loanIds.join(',')
-        const deleteStatus = await deleteInstallmentsFromProd(loanIdString)
         let paymentRecords = await getOverallPayments(loanIdString)
         paymentRecords = groupBy(paymentRecords, 'loan_id')
-        let installmentsPif = await mysql.query(`Select * from installment_pif where loan_id in (${loanIdString}) order by inst_number asc`, [], 'prod')
+        let installmentsPif = await getInstallments(loanIdString)
         installmentsPif = installmentsPif.map((each) => {
             each['amount_outstanding_principal'] = each.inst_principal
             each['amount_outstanding_interest'] = each.inst_interest
@@ -75,6 +74,7 @@ const startOperations = async (data) =>{
             }
         }
         const paymentsArray = createPaymentInst(installmentPaymentPifInsertionArray)
+        const deleteStatus = await deleteInstallmentsFromProd(loanIdString)
         const result = await insertPaymentsArray(paymentsArray, loanIdString)
         return result
     }catch(error){
@@ -211,7 +211,7 @@ const calculateInterest =(principal, payment, bucketAmount, table) => {
             if(table === 'pif'){
                 principal['emi_status_id'] =  2
             }
-            commonIpInsObject = this.createInsertionObject(principal, outstandingInterest, payment, 'int')
+            commonIpInsObject = createInsertionObject(principal, outstandingInterest, payment, 'int')
             bucketAmount = bucketAmount - outstandingInterest
         } else {
             let receivedInterest = bucketAmount + principal['received_interest'] 
@@ -220,7 +220,7 @@ const calculateInterest =(principal, payment, bucketAmount, table) => {
             principal['amount_outstanding_interest'] = outstandingAmountInterst
             principal['last_paying_date'] =  payment['received_date']
             principal['updated'] = true
-            commonIpInsObject = this.createInsertionObject(principal, bucketAmount, payment, 'int')
+            commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'int')
             bucketAmount = 0
         }
     }
@@ -239,13 +239,28 @@ const createInsertionObject = (principal,amount, payment, type) => {
         'code_payment_type': type === 'pri' ? 2 : 3,
         'amount_payment': amount,
         'payment_status': 1,
-        'payment_pairing_date': payment['payment_pairing_date'],
+        'payment_pairing_date': new Date(),
         'payment_date': payment['received_date'],
-        'payment_id': payment['payment_id']
+        'payment_id': payment['id']
     }
     return commonIpInsObject
 }
 
+const mergeArrays = (array1, array2) => {
+    const map = new Map()
+    array1.forEach(obj => {
+        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+        map.set(key, obj)
+    });
+    array2.forEach(obj => {
+        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+        if (map.has(key)) {
+            const index = array2.findIndex(o => o.id === obj.id && o.inst_number === obj.inst_number && o.inst_date === obj.inst_date)
+            array2[index] = map.get(key);
+        }
+    });
+    return array2
+}
 
 const insertPaymentsArray = async (paymentsArray, loanIdString) => {
     try{
@@ -295,9 +310,9 @@ const getInstallments = (loanIdString) => {
     return new Promise(async(resolve , reject) => {
         try{
             logger.info(`Getting the installments from the Loan-Tape database for inserting`)
-            const loanTapeInstallments = await mysql.query(`Select * from installment_pif where loan_id in (${loanIdString})`, [], 'loan-tape')
+            const prodInstallments = await mysql.query(`Select * from installment_pif where loan_id in (${loanIdString}) order by inst_number asc`, [], 'prod')
             logger.info(`Got the installments from the Loan-Tape database`)
-            resolve(loanTapeInstallments)
+            resolve(prodInstallments)
         }catch(error){
             logger.error(`Error while getting installments from the Loan-tape database for (${loanIdString}).`)
             logger.error(`Error which is Encountered while getting the installments from the Loan-tape database is ${error}`)

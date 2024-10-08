@@ -9,11 +9,12 @@ const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
         const dataStream = conn.query('select * from st_ksf_customer', []).stream();
-        await pipeline(dataStream, batchStream, createProcessStream(companyEntity));
+        await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
     } catch (error) {
-        logger.error("Error while initiating the amortization process");
+        logger.error("Error while updating the st_loan table in the production database:" ,error);
+        throw error
         
     }
 };

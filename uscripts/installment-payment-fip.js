@@ -4,17 +4,20 @@ const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
 const logger = require("../logger/logger");
 
+let batchCount = 0
+let inProgressCount = 0
+let dataCount = 0
 
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from st_ksf_customer', []).stream();
-        await pipeline(dataStream, batchStream, createProcessStream(companyEntity));
+        const dataStream = conn.query('select * from st_ksf_customer where loan_id = 417638', []).stream();
+        await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
     } catch (error) {
-        logger.error("Error while initiating the amortization process");
-        
+        logger.error("Error while initiating data transfer for installment_payment_fip process");
+        throw error
     }
 };
 
@@ -55,12 +58,13 @@ const startOperations = async (data) =>{
         const loanIdString = loanIds.join(',')
         let paymentRecords = await getOverallPayments(loanIdString)
         paymentRecords = groupBy(paymentRecords, 'loan_id')
-        let installmentsFip = await mysql.query(`Select * from installment_fip where loan_id in (${loanIdString}) order by inst_number asc`, [], 'prod')
-        installmentsFip = installmentsFip.map((each) => {
+        let installmentsFip = await mysql.query(`Select * from installment_fip where loan_id in (${loanIdString}) and is_delete = 0 order by inst_number asc`, [], 'prod')
+        installmentsFip = installmentsFip.  map((each) => {
             each['amount_outstanding_principal'] = each.inst_principal
             each['amount_outstanding_interest'] = each.inst_interest
             each['received_principal'] = 0
             each['received_interest'] = 0
+            return each
         })
         const groupedFip = groupBy(installmentsFip, 'loan_id') 
         let installmentPaymentFipInsertionArray = []
@@ -68,7 +72,7 @@ const startOperations = async (data) =>{
             if(paymentRecords[loanId].length > 0){
                 for (let record of paymentRecords[loanId]) {
                     let [updatedInstallmentFIPArray, insFip, bucketAmountpif] = generatePayments(record['amt_payment'], record, groupedFip[loanId], 'fip', 'col', 0)
-                    groupedPaymentsFip[loanId] = updatedInstallmentFIPArray
+                    groupedFip[loanId] = updatedInstallmentFIPArray
                     installmentPaymentFipInsertionArray.push(...insFip)
                 }
             }
@@ -151,6 +155,22 @@ const generatePayments = (bucketAmount, payment, installments, table, col, instN
     }
 }
 
+const mergeArrays = (array1, array2) => {
+    const map = new Map()
+    array1.forEach(obj => {
+        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+        map.set(key, obj)
+    });
+    array2.forEach(obj => {
+        const key = `${obj.id}_${obj.inst_number}_${obj.inst_date}`
+        if (map.has(key)) {
+            const index = array2.findIndex(o => o.id === obj.id && o.inst_number === obj.inst_number && o.inst_date === obj.inst_date)
+            array2[index] = map.get(key);
+        }
+    });
+    return array2
+}
+
 
 const sortByInstDateAndNumber = (arr) => {
     return arr.sort((a, b) => {
@@ -211,7 +231,7 @@ const calculateInterest =(principal, payment, bucketAmount, table) => {
             if(table === 'pif'){
                 principal['emi_status_id'] =  2
             }
-            commonIpInsObject = this.createInsertionObject(principal, outstandingInterest, payment, 'int')
+            commonIpInsObject = createInsertionObject(principal, outstandingInterest, payment, 'int')
             bucketAmount = bucketAmount - outstandingInterest
         } else {
             let receivedInterest = bucketAmount + principal['received_interest'] 
@@ -220,7 +240,7 @@ const calculateInterest =(principal, payment, bucketAmount, table) => {
             principal['amount_outstanding_interest'] = outstandingAmountInterst
             principal['last_paying_date'] =  payment['received_date']
             principal['updated'] = true
-            commonIpInsObject = this.createInsertionObject(principal, bucketAmount, payment, 'int')
+            commonIpInsObject = createInsertionObject(principal, bucketAmount, payment, 'int')
             bucketAmount = 0
         }
     }
@@ -239,9 +259,9 @@ const createInsertionObject = (principal,amount, payment, type) => {
         'code_payment_type': type === 'pri' ? 2 : 3,
         'amount_payment': amount,
         'payment_status': 1,
-        'payment_pairing_date': payment['payment_pairing_date'],
+        'payment_pairing_date': new Date(),
         'payment_date': payment['received_date'],
-        'payment_id': payment['payment_id']
+        'payment_id': payment['id']
     }
     return commonIpInsObject
 }
@@ -312,7 +332,7 @@ const getOverallPayments = (loanIdString) => {
         try{
             logger.info('Getting all the payments on the following loanids from the production database')
             const overallPayments = await mysql.query(`Select * from overall_payment where loan_id in (${loanIdString}) order by id asc`, [] , 'prod')
-            logger.infor('Retrived all the payments for the given loanids')
+            logger.info('Retrived all the payments for the given loanids')
             resolve(overallPayments)
         }catch(error){
             logger.error(`Error while getting the payments from the overall payments db for loan_ids in (${loanIdString})`)

@@ -40,15 +40,15 @@ const createProcessStream = () => new Transform({
     objectMode: true,
     async transform(data, encoding, callback) {
         try {
-            await getAndUpdatePayments(data);
+            await getAndUpdatePenaltyPif(data);
         } catch (error) {
-            logger.error("Error in processing payments: ", error);
+            logger.error("Error in processing the penalty-details-pif: ", error);
         }
         callback();
     }
 });
 
-const getAndUpdatePayments = async (data) => {
+const getAndUpdatePenaltyPif = async (data) => {
     const loanIds = data.map(item => item.loan_id).join(',');
     try {
         const loanTapePenalties = await mysql.query(
