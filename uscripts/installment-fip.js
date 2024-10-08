@@ -10,7 +10,7 @@ let dataCount = 0
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from st_ksf_customer where loan_id = 417638', []).stream();
+        const dataStream = conn.query('select * from st_ksf_customer group by loan_id', []).stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
