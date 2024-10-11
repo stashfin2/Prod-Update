@@ -8,7 +8,7 @@ const processJob = async () => {
     let conn;
     try {
         conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from pdpif_t where is_done = 0 limit 100').stream();
+        const dataStream = conn.query('select * from pdpif_t where is_done = 0').stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         process.exit(0);
     } catch (error) {

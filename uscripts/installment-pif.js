@@ -11,7 +11,7 @@ let dataCount = 0
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from pif_t where is_done = 0 group by loan_id limit 10', []).stream();
+        const dataStream = conn.query('select * from pif_t where is_done = 0', []).stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
