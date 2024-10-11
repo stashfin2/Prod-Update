@@ -12,7 +12,7 @@ const processJob = async () => {
     let conn;
     try {
         conn = await mysql.getConnections();
-        const dataStream = conn.query('SELECT * FROM st_ksf_customer where loan_id = 417638').stream();
+        const dataStream = conn.query('select * from op_t where is_done = 0').stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         process.exit(0);
     } catch (error) {
@@ -61,47 +61,41 @@ const createProcessStream = () => new Transform({
     objectMode: true,
     async transform(data, encoding, callback) {
         try {
-            await getAndUpdatePayments(data);
+            const loanIds = data.map(item => item.loan_id).join(',');
+            let copyCreds = JSON.parse(JSON.stringify(data))
+            const whereClauses = copyCreds.map(item => `(loan_id = ${item.loan_id} AND customer_id = ${item.customer_id})`).join(' OR ')
+            console.log("Where clause>>>>>", whereClauses)
+            logger.info("Fetching details from the overall payment table for all the loan ids")
+            let loanTapePayments = await mysql.query(`SELECT * FROM overall_payment WHERE ${whereClauses} ORDER BY id asc`, [], 'loan-tape')
+            const deleteOp = await deleteDataFromOverallPayment(whereClauses, {});
+            const paymentsData = createOverallPaymentCompatibleArray(loanTapePayments);
+            logger.info('Starting insertion into overall_payment table');
+            const result = await mysql.query(
+                `INSERT INTO overall_payment (customer_id, loan_id, amt_payment, received_date, cheque_number, urm_no, payment_channel, transaction_id, ref_no, utr_no, neft_bank, presentation_status, bounce_reason, presentation_date, create_date, extra_amount, extra_amount_pif, remarks, add_user_id, update_user_id, is_delete, is_refund, update_date, transaction_commit_status) VALUES ?`,
+                [paymentsData],
+                'prod'
+            );
+            logger.info(`Inserted ${result.affectedRows} rows into overall_payment table`);
+            const ovp = await mysql.query(`update op_t set is_done = 1 where ${whereClauses}`, [], 'loan-tape')
+            await Promise.all([loanTapePayments, deleteOp, result, ovp]).then((res) => {
+                logger.info("Successfully transfered the batch to the overall_payments table in the prod")
+            }).catch((error) =>{
+                logger.error(`Error while transfering the batch to the overall_payments table:`, error)
+            })
         } catch (error) {
             logger.error("Error in processing payments: ", error);
         }
-    //    callback();
+       callback();
     }
 });
 
-const getAndUpdatePayments = async (data) => {
-    const loanIds = data.map(item => item.loan_id).join(',');
-    // let connection = await mysql.getConnections('prod')
-    // connection = await mysql.beginTransaction(connection)
-    try {
-        const loanTapePayments = await mysql.query(
-            `SELECT * FROM overall_payment WHERE loan_id IN (${loanIds}) ORDER BY id asc`, 
-            [], 
-            'loan-tape'
-        );
-        await deleteDataFromOverallPayment(loanIds, {});
-        const paymentsData = createOverallPaymentCompatibleArray(loanTapePayments);
-        logger.info('Starting insertion into overall_payment table');
-        const result = await mysql.query(
-            `INSERT INTO overall_payment (customer_id, loan_id, amt_payment, received_date, cheque_number, urm_no, payment_channel, transaction_id, ref_no, utr_no, neft_bank, presentation_status, bounce_reason, presentation_date, create_date, extra_amount, extra_amount_pif, remarks, add_user_id, update_user_id, is_delete, is_refund, update_date, transaction_commit_status) VALUES ?`,
-            [paymentsData],
-            'prod'
-        );
-        logger.info(`Inserted ${result.affectedRows} rows into overall_payment table`);
-        // await mysql.rollback(connection)
-        return result;
-    } catch (error) {
-        logger.error("Error while getting and updating payments: ", error);
-        // await mysql.rollback(connection)
-        throw error;
-    }
-};
 
-const deleteDataFromOverallPayment = async (loanIds, connection) => {
+
+const deleteDataFromOverallPayment = async (whereClauses, connection) => {
     try {
-        logger.info(`Deleting payments with loan_ids: ${loanIds}`);
+        logger.info(`Deleting payments with loan_ids: ${whereClauses}`);
         const result = await mysql.query(
-            `DELETE FROM overall_payment WHERE loan_id IN (${loanIds})`, 
+            `DELETE FROM overall_payment WHERE ${whereClauses}`, 
             [], 
             'prod'
         );
@@ -133,7 +127,7 @@ const createOverallPaymentCompatibleArray = (payments) => {
             payment.create_date,
             payment.extra_amount,
             payment.extra_amount_pif,
-            payment.remarks,
+            "others",
             payment.add_user_id,
             payment.update_user_id,
             payment.is_delete,

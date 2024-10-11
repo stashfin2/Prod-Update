@@ -8,7 +8,7 @@ const processJob = async () => {
     let conn;
     try {
         conn = await mysql.getConnections();
-        const dataStream = conn.query('SELECT * FROM st_ksf_customer').stream();
+        const dataStream = conn.query('select * from pd_t where is_done = 0 limit 100').stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         process.exit(0);
     } catch (error) {
@@ -40,7 +40,24 @@ const createProcessStream = () => new Transform({
     objectMode: true,
     async transform(data, encoding, callback) {
         try {
-            await getAndUpdatePenalty(data);
+            const loanIds = data.map(item => item.loan_id).join(',');
+            let copyCreds = JSON.parse(JSON.stringify(data))
+            const whereClauses = copyCreds.map(item => `(loan_id = ${item.loan_id} AND customer_id = ${item.customer_id} AND is_paid = 0)`).join(' OR ')
+            const whereClausesForUpdate = copyCreds.map(item => `(loan_id = ${item.loan_id} AND customer_id = ${item.customer_id})`).join(' OR ')
+            console.log("customer_id and loan_id to update>>>>", whereClausesForUpdate)
+            const loanTapePenalties = await mysql.query(
+                `SELECT * FROM penalty_details WHERE ${whereClauses}`, 
+                [], 
+                'loan-tape'
+            );
+            const deleteOp = await deleteDataFromPenaltyDetails(loanIds, whereClauses);
+            const insertOp = await insertPenalties(loanTapePenalties, loanIds)
+            const lpdp = await mysql.query(`update pd_t set is_done = 1 where ${whereClausesForUpdate}`, [], 'loan-tape')
+            await Promise.all([loanTapePenalties, deleteOp, insertOp, lpdp]).then((res) =>{
+                logger.info("All operations for data tranasfer for penalty details from loan-tape to prod has been done")
+            }).catch((error) => {
+                logger.error("Error while transfering the above batch in the prod db")
+            })
         } catch (error) {
             logger.error("Error in processing payments: ", error);
         }
@@ -48,29 +65,17 @@ const createProcessStream = () => new Transform({
     }
 });
 
-const getAndUpdatePenalty = async (data) => {
-    const loanIds = data.map(item => item.loan_id).join(',');
-    try {
-        const loanTapePenalties = await mysql.query(
-            `SELECT * FROM penalty_details WHERE loan_id IN (${loanIds})  and is_paid = 0`, 
-            [], 
-            'loan-tape'
-        );
-        await deleteDataFromPenaltyDetails(loanIds);
-        await insertPenalties(loanTapePenalties)
-    
-        return result;
-    } catch (error) {
-        logger.error("Error while getting and updating payments: ", error);
-        throw error;
-    }
-};
 
-const insertPenalties = async (data) => {
+
+const insertPenalties = async (data, loanIds) => {
     try{
         logger.info(`Initiating the insertion process in the penalty_details table`)
         const insertQuery = `INSERT INTO penalty_details (customer_id,loan_id,instalment_id,instalment_number,penalty_amount,penalty_date,penalty_received,penalty_received_date,outstanding_penalty,is_paid,panalty_type_id,payment_id,foreclose_status,status,create_date) VALUES ?`
         const penaltyArray = createPenaltyCompatibleArray(data)
+        if(penaltyArray.length === 0){
+            logger.info("there are no penalties present to insert with the given loanIds:", loanIds)
+            return true
+        }
         const result = await mysql.query(insertQuery, [penaltyArray], 'prod')
         logger.info(`Successfully inserted ${result.affectedRows} penalties inside the penalty details table`)
         return result
@@ -80,11 +85,11 @@ const insertPenalties = async (data) => {
     }
 }
 
-const deleteDataFromPenaltyDetails = async (loanIds) => {
+const deleteDataFromPenaltyDetails = async (loanIds, whereClauses) => {
     try {
         logger.info(`Deleting penalties from penalty-details for loan_ids and is_paid = 0: ${loanIds}`);
         const result = await mysql.query(
-            `DELETE FROM penalty_details WHERE loan_id IN (${loanIds}) and is_paid = 0`, 
+            `DELETE FROM penalty_details WHERE ${whereClauses}`, 
             [], 
             'prod'
         );

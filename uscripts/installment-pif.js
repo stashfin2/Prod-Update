@@ -11,11 +11,12 @@ let dataCount = 0
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from st_ksf_customer group by loan_id', []).stream();
-        await pipeline(dataStream, batchStream, createProcessStream);
+        const dataStream = conn.query('select * from pif_t where is_done = 0 group by loan_id limit 10', []).stream();
+        await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
     } catch (error) {
+        console.log("error>>>", error)
         logger.error("Error while initiating the amortization process");
         
     }
@@ -55,41 +56,36 @@ const batchStream = new Transform({
 });
 
 
-const createProcessStream =
+const createProcessStream = () =>
     new Transform({
         objectMode: true,
         async transform(data, encoding, callback) {
             inProgressCount = inProgressCount + 1;
-            await getAndInsertInstallmentPif(data);
-            // callback()
+            try{
+                const loanIds = data.map((each)=> each.loan_id)
+                const loanIdString = loanIds.join(',')
+                let copyCreds = JSON.parse(JSON.stringify(data))
+                const whereClauses = copyCreds.map(item => `(customer_id = ${item.customer_id} AND loan_id = ${item.loan_id})`).join(' OR ')
+                console.log('LoanIdString>>>>>>>>>>>>', loanIdString)
+                const loanTapeInstallments = await getInstallments(loanIdString)
+                const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString, {})
+                const insertOp = await insertInstallments(loanTapeInstallments, {})
+                const upd = await mysql.query(`update pif_t set is_done = 1 where ${whereClauses}`, [], 'loan-tape')
+                logger.info('updating loan_tape_data table for committing status')
+                await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp, upd]).then(async (res) => {
+                    logger.info(`Successfully performed all the operations and starting with another batch`)
+                    
+                }).catch((error) => {
+                    logger.error(`Error while performing all the operations:`, error)
+                })
+            }catch(error){
+                logger.error(`Error while getting and inserting in installmentpif:`,error)
+            }
+
+            callback()
         },
     });
 
-const getAndInsertInstallmentPif = (data) =>{
-    return new Promise(async (resolve, reject) => {
-        // let connection = await mysql.getConnections('prod')
-        // connection = await mysql.beginTransaction(connection)
-        try{
-            const loanIds = data.map((each)=> each.loan_id)
-            const loanIdString = loanIds.join(',')
-            const loanTapeInstallments = await getInstallments(loanIdString)
-            const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString, {})
-            const insertOp = await insertInstallments(loanTapeInstallments, {})
-            await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp]).then(async (res) => {
-                logger.info(`Successfully performed all the operations and starting with another batch`)
-                // await mysql.rollback(connection)
-                resolve()
-            }).catch((error) => {
-                logger.error(`Error while performing all the operations:`, error)
-                reject()
-            })
-        }catch(error){
-            logger.error(`Error while getting and inserting in installmentpif:`,error)
-            // await mysql.rollback(connection)
-            reject(error)
-        }
-    })
-}
 
 const deleteInstallmentsFromProd = (loanIdString, conn) => {
     return new Promise(async (resolve, reject ) => {
@@ -189,3 +185,28 @@ const mapDataToInsertArray = (instalments) => {
 };
 
 processJob()
+
+
+// const getAndInsertInstallmentPif = (data) =>{
+//     return new Promise(async (resolve, reject) => {
+//         try{
+//             const loanIds = data.map((each)=> each.loan_id)
+//             const loanIdString = loanIds.join(',')
+//             console.log('LoanIdString>>>>>>>>>>>>', loanIdString)
+//             const loanTapeInstallments = await getInstallments(loanIdString)
+//             const deleteDataFromProd = await deleteInstallmentsFromProd(loanIdString, {})
+//             const insertOp = await insertInstallments(loanTapeInstallments, {})
+//             const upd = await mysql.query(`update loan_tape data set stage = 110 where loan_id in (${loanIdString})`)
+//             await Promise.all([loanTapeInstallments, deleteDataFromProd, insertOp]).then(async (res) => {
+//                 logger.info(`Successfully performed all the operations and starting with another batch`)
+//                 resolve()
+//             }).catch((error) => {
+//                 logger.error(`Error while performing all the operations:`, error)
+//                 reject()
+//             })
+//         }catch(error){
+//             logger.error(`Error while getting and inserting in installmentpif:`,error)
+//             reject(error)
+//         }
+//     })
+// }
