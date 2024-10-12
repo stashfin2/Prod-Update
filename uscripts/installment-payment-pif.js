@@ -4,11 +4,15 @@ const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
 const logger = require("../logger/logger");
 
+let batchCount = 0
+let inProgressCount = 0
+let dataCount = 0
+
 
 const processJob = async () => {
     try {
         const conn = await mysql.getConnections();
-        const dataStream = conn.query('select * from st_ksf_customer', []).stream();
+        const dataStream = conn.query('select * from paypif where is_done = 0', []).stream();
         await pipeline(dataStream, batchStream, createProcessStream());
         if (conn) conn.release();
         process.exit(0);
@@ -22,19 +26,33 @@ const processJob = async () => {
 const batchStream = new Transform({
     objectMode: true,
     transform(chunk, encoding, callback) {
-        this.buffer = (this.buffer || []).concat(chunk);
-        if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
-            dataCount = dataCount + this.buffer.length;
-            batchCount = batchCount + 1;
-            logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
-            this.push(this.buffer);
-            this.buffer = [];
+        try {
+            this.buffer = this.buffer || [];
+            this.buffer = this.buffer.concat(chunk);
+            if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
+                dataCount = dataCount + this.buffer.length;
+                batchCount = batchCount + 1;
+                logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
+                this.push(this.buffer);
+                this.buffer = [];
+            }
+
+            callback();
+        } catch (error) {
+            logger.error("Error in the transform function: ", error);
+            callback(error); // Pass the error to the callback
         }
-        callback();
     },
     flush(callback) {
-        if (this.buffer.length > 0) this.push(this.buffer);
-        callback();
+        try {
+            if (this.buffer && this.buffer.length > 0) {
+                this.push(this.buffer);
+            }
+            callback(); 
+        } catch (error) {
+            logger.error("Error in the flush function: ", error);
+            callback(error);
+        }
     },
 });
 
@@ -46,7 +64,9 @@ const createProcessStream = () =>
             try{
                 const loanIds = data.map((each)=> each.loan_id)
                 const loanIdString = loanIds.join(',')
-                let paymentRecords = await getOverallPayments(loanIdString)
+                let copyCreds = JSON.parse(JSON.stringify(data))
+                const whereClauses = copyCreds.map(item => `(customer_id = ${item.customer_id} AND loan_id = ${item.loan_id})`).join(' OR ')
+                let paymentRecords = await getOverallPayments(loanIdString, whereClauses)
                 paymentRecords = groupBy(paymentRecords, 'loan_id')
                 let installmentsPif = await getInstallments(loanIdString)
                 installmentsPif = installmentsPif.map((each) => {
@@ -54,6 +74,7 @@ const createProcessStream = () =>
                     each['amount_outstanding_interest'] = each.inst_interest
                     each['received_principal'] = 0
                     each['received_interest'] = 0
+                    return each
                 })
                 const groupedPif = groupBy(installmentsPif, 'loan_id') 
                 let installmentPaymentPifInsertionArray = []
@@ -67,8 +88,14 @@ const createProcessStream = () =>
                     }
                 }
                 const paymentsArray = createPaymentInst(installmentPaymentPifInsertionArray)
-                await deleteInstallmentsFromProd(loanIdString)
+                const del = await deleteInstallmentsFromProd(loanIdString, whereClauses)
                 const result = await insertPaymentsArray(paymentsArray, loanIdString)
+                const upd = await mysql.query(`update paypif set is_done = 1 where ${whereClauses}`, [], 'loan-tape')
+                await Promise.all([del, result, upd]).then((res) => {
+                    logger.info("updated installment_payment_pif for this batch")
+                }).catch((error) => {
+                    logger.error("Error while inserting installment_payment_fip table:", error)
+                })
             }catch(error){
                 logger.error(`Error while performing the combined operation in installment-payment-pif table:`, error)
                 throw error
@@ -304,7 +331,11 @@ const mergeArrays = (array1, array2) => {
 const insertPaymentsArray = async (paymentsArray, loanIdString) => {
     try{
         logger.info('Initializing the insertion process in the installment_payment_pif table.')
-        const insertQuery = 'Insert into installment_payment_pif set (customer_id, loan_id, inst_id, inst_number, code_payment_type, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?'
+        const insertQuery = 'Insert into installment_payment_pif (customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?'
+        if(paymentsArray.length === 0){
+            logger.info("No payment present to insert in installment-payment-pif table")
+            return true
+        }
         const result = await mysql.query(insertQuery, [paymentsArray], 'prod')
         logger.info(`Successfully inserted ${result.affectedRows} in the installment_payments_pif table prod`)
         return result
@@ -317,7 +348,7 @@ const insertPaymentsArray = async (paymentsArray, loanIdString) => {
 
 const createPaymentInst = (array) => {
     try{
-        const compatibleArray = array.map((item) => [item.customer_id, item.loan_id, item.inst_id, item.inst_number, item.code_payment_type,
+        const compatibleArray = array.map((item) => [item.customer_id, item.loan_id, item.inst_id, item.inst_number,
             item.code_payment_type, item.amount_payment, item.payment_status, item.payment_pairing_date, item.payment_date, item.payment_id
         ])
         return compatibleArray
@@ -329,11 +360,11 @@ const createPaymentInst = (array) => {
 
 
 
-const deleteInstallmentsFromProd = (loanIdString) => {
+const deleteInstallmentsFromProd = (loanIdString, whereClauses) => {
     return new Promise(async (resolve, reject ) => {
         try{
             logger.info('Initiating the installments deletion process from installment_pif table in the production database')
-            const deleteDataFromProd =  `DELETE FROM overall_payment WHERE loan_id in (${loanIdString})`
+            const deleteDataFromProd =  `DELETE FROM installment_payment_pif WHERE ${whereClauses} and code_payment_type in (2,3)`
             const deleteOp = await mysql.query(deleteDataFromProd, [], 'prod')
             logger.info(`Successfully completed the installments deletion process from the production database`)
             resolve(deleteOp)
@@ -361,12 +392,12 @@ const getInstallments = (loanIdString) => {
 }
 
 
-const getOverallPayments = (loanIdString) => {
+const getOverallPayments = (loanIdString, whereClauses) => {
     return new Promise(async(resolve, reject) => {
         try{
             logger.info('Getting all the payments on the following loanids from the production database')
-            const overallPayments = await mysql.query(`Select * from overall_payment where loan_id in (${loanIdString}) order by id asc`, [] , 'prod')
-            logger.infor('Retrived all the payments for the given loanids')
+            const overallPayments = await mysql.query(`Select * from overall_payment where ${whereClauses} order by id asc`, [] , 'prod')
+            logger.info('Retrived all the payments for the given loanids')
             resolve(overallPayments)
         }catch(error){
             logger.error(`Error while getting the payments from the overall payments db for loan_ids in (${loanIdString})`)
