@@ -15,7 +15,7 @@ node uscripts/st-loan-update.js
 echo "First batch completed. Starting the second batch of scripts..."
 
 # Second Batch of Scripts
-node uscripts/installment-payment-fip.js
-node uscripts/installment-payment-pif.js
+# node uscripts/installment-payment-fip.js
+# node uscripts/installment-payment-pif.js
 
 echo "All scripts have been executed successfully."
