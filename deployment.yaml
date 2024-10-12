@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-scripts-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-scripts
+  template:
+    metadata:
+      labels:
+        app: node-scripts
+    spec:
+      containers:
+      - name: node-scripts-container
+        image: 331916247734.dkr.ecr.ap-south-1.amazonaws.com/api-v1/staging:scriptR
+        imagePullPolicy: IfNotPresent
+        # env:
+        # - name: STREAM_BATCH_SIZE
+        #   value: "100"  # Example environment variable, adjust as needed
+        # # Add other environment variables here if necessary
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
