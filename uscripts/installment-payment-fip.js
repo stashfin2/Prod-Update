@@ -25,19 +25,33 @@ const processJob = async () => {
 const batchStream = new Transform({
     objectMode: true,
     transform(chunk, encoding, callback) {
-        this.buffer = (this.buffer || []).concat(chunk);
-        if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
-            dataCount = dataCount + this.buffer.length;
-            batchCount = batchCount + 1;
-            logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
-            this.push(this.buffer);
-            this.buffer = [];
+        try {
+            this.buffer = this.buffer || [];
+            this.buffer = this.buffer.concat(chunk);
+            if (this.buffer.length >= Number(process.env.STREAM_BATCH_SIZE || 100)) {
+                dataCount = dataCount + this.buffer.length;
+                batchCount = batchCount + 1;
+                logger.info(`Batch count:>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>${batchCount}`);
+                this.push(this.buffer);
+                this.buffer = [];
+            }
+
+            callback();
+        } catch (error) {
+            logger.error("Error in the transform function: ", error);
+            callback(error); // Pass the error to the callback
         }
-        callback();
     },
     flush(callback) {
-        if (this.buffer.length > 0) this.push(this.buffer);
-        callback();
+        try {
+            if (this.buffer && this.buffer.length > 0) {
+                this.push(this.buffer);
+            }
+            callback(); 
+        } catch (error) {
+            logger.error("Error in the flush function: ", error);
+            callback(error);
+        }
     },
 });
 
@@ -46,7 +60,38 @@ const createProcessStream = () =>
         objectMode: true,
         async transform(data, encoding, callback) {
             inProgressCount = inProgressCount + 1;
-            await startOperations(data);
+            try{
+                const loanIds = data.map((each)=> each.loan_id)
+                const loanIdString = loanIds.join(',')
+                let paymentRecords = await getOverallPayments(loanIdString)
+                paymentRecords = groupBy(paymentRecords, 'loan_id')
+                let installmentsFip = await getInstallments(loanIdString)
+                installmentsFip = installmentsFip.  map((each) => {
+                    each['amount_outstanding_principal'] = each.inst_principal
+                    each['amount_outstanding_interest'] = each.inst_interest
+                    each['received_principal'] = 0
+                    each['received_interest'] = 0
+                    return each
+                })
+                const groupedFip = groupBy(installmentsFip, 'loan_id') 
+                let installmentPaymentFipInsertionArray = []
+                for(let loanId in paymentRecords){ 
+                    if(paymentRecords[loanId].length > 0){
+                        for (let record of paymentRecords[loanId]) {
+                            let [updatedInstallmentFIPArray, insFip, bucketAmountpif] = generatePayments(record['amt_payment'], record, groupedFip[loanId], 'fip', 'col', 0)
+                            groupedFip[loanId] = updatedInstallmentFIPArray
+                            installmentPaymentFipInsertionArray.push(...insFip)
+                        }
+                    }
+                }
+                const paymentsArray = createPaymentInst(installmentPaymentFipInsertionArray)
+                await deleteInstallmentsFromProd(loanIdString)
+                const result = await insertPaymentsArray(paymentsArray, loanIdString)
+                return result
+            }catch(error){
+                logger.error(`Error while performing the combined operation in installment-payment-fip table:`, error)
+                throw error
+            }
             callback()
         },
     });

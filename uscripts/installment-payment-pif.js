@@ -43,45 +43,40 @@ const createProcessStream = () =>
         objectMode: true,
         async transform(data, encoding, callback) {
             inProgressCount = inProgressCount + 1;
-            await startOperations(data);
+            try{
+                const loanIds = data.map((each)=> each.loan_id)
+                const loanIdString = loanIds.join(',')
+                let paymentRecords = await getOverallPayments(loanIdString)
+                paymentRecords = groupBy(paymentRecords, 'loan_id')
+                let installmentsPif = await getInstallments(loanIdString)
+                installmentsPif = installmentsPif.map((each) => {
+                    each['amount_outstanding_principal'] = each.inst_principal
+                    each['amount_outstanding_interest'] = each.inst_interest
+                    each['received_principal'] = 0
+                    each['received_interest'] = 0
+                })
+                const groupedPif = groupBy(installmentsPif, 'loan_id') 
+                let installmentPaymentPifInsertionArray = []
+                for(let loanId in paymentRecords){ 
+                    if(paymentRecords[loanId].length > 0){
+                        for (let record of paymentRecords[loanId]) {
+                            let [updatedInstallmentPifArray, insPif, bucketAmountpif] = generatePayments(record['amt_payment'], record, groupedPif[loanId], 'pif', 'col', 0)
+                            groupedPif[loanId] = updatedInstallmentPifArray
+                            installmentPaymentPifInsertionArray.push(...insPif)
+                        }
+                    }
+                }
+                const paymentsArray = createPaymentInst(installmentPaymentPifInsertionArray)
+                await deleteInstallmentsFromProd(loanIdString)
+                const result = await insertPaymentsArray(paymentsArray, loanIdString)
+            }catch(error){
+                logger.error(`Error while performing the combined operation in installment-payment-pif table:`, error)
+                throw error
+            }
             callback()
         },
     });
 
-
-const startOperations = async (data) =>{
-    try{
-        const loanIds = data.map((each)=> each.loan_id)
-        const loanIdString = loanIds.join(',')
-        let paymentRecords = await getOverallPayments(loanIdString)
-        paymentRecords = groupBy(paymentRecords, 'loan_id')
-        let installmentsPif = await getInstallments(loanIdString)
-        installmentsPif = installmentsPif.map((each) => {
-            each['amount_outstanding_principal'] = each.inst_principal
-            each['amount_outstanding_interest'] = each.inst_interest
-            each['received_principal'] = 0
-            each['received_interest'] = 0
-        })
-        const groupedPif = groupBy(installmentsPif, 'loan_id') 
-        let installmentPaymentPifInsertionArray = []
-        for(let loanId in paymentRecords){ 
-            if(paymentRecords[loanId].length > 0){
-                for (let record of paymentRecords[loanId]) {
-                    let [updatedInstallmentPifArray, insPif, bucketAmountpif] = generatePayments(record['amt_payment'], record, groupedPif[loanId], 'pif', 'col', 0)
-                    groupedPif[loanId] = updatedInstallmentPifArray
-                    installmentPaymentPifInsertionArray.push(...insPif)
-                }
-            }
-        }
-        const paymentsArray = createPaymentInst(installmentPaymentPifInsertionArray)
-        await deleteInstallmentsFromProd(loanIdString)
-        const result = await insertPaymentsArray(paymentsArray, loanIdString)
-        return result
-    }catch(error){
-        logger.error(`Error while performing the combined operation in installment-payment-pif table:`, error)
-        throw error
-    }
-}
 
 const generatePayments = (bucketAmount, payment, installments, table, col, instNumber) => {
     try {
