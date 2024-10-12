@@ -69,6 +69,7 @@ const _mysql = {
         conn.release();
         return resolve(res);
       } catch (error) {
+        console.log("here is query>>>>>>>", queryStr)
         logger.error(`Error while querying the database for ${location}:`,error)
         reject(error);
       }
