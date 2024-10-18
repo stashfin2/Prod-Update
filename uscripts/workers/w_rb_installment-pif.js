@@ -16,7 +16,7 @@ function getDaysDifference(date1, date2) {
 }
 
 // Batch stream to accumulate records and push them downstream in batches
-function createBatchStream(batchSize = 100, callback) {
+function createBatchStream(callback) {
   let batch = [];
 
   return new Transform({
@@ -71,7 +71,7 @@ const processJob = async () => {
   try {
     const conn = await mysql.getConnections();
     const dataStream = conn
-      .query("select * from installment_pif where is_delete = 0 and customer_facing = 1 and inst_status = 1 and emi_status_id in (1,3) and inst_date < date(now()) limit 1000", [])
+      .query("select * from installment_pif where is_delete = 0 and customer_facing = 1 and inst_status = 1 and emi_status_id in (1,3) and inst_date < date(now())", [])
       .stream();
 
     const batchStream = createBatchStream(batchSize, () => {
