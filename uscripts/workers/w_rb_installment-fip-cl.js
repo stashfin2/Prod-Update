@@ -69,9 +69,8 @@ function createProcessStream() {
 // Main function to execute the job
 const processJob = async () => {
   try {
-    const conn = await mysql.getConnections();
-    const dataStream = conn
-      .query("select * from installment_fip_cl where is_delete = 0 and customer_facing = 1 and inst_status = 1 and emi_status_id in (1,3) and inst_date < date(now())", [])
+    const conn = await mysql.getConnections('prod');
+    const dataStream = conn.query("select * from installment_fip_cl where is_delete = 0 and customer_facing = 1 and inst_status = 1 and emi_status_id in (1,3) and inst_date < date(now())", [])
       .stream();
 
     const batchStream = createBatchStream(batchSize, () => {

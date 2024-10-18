@@ -69,7 +69,7 @@ function createProcessStream() {
 // Main function to execute the job
 const processJob = async () => {
   try {
-    const conn = await mysql.getConnections();
+    const conn = await mysql.getConnections('prod');
     const dataStream = conn
       .query("select * from installment_pif where is_delete = 0 and customer_facing = 1 and inst_status = 1 and emi_status_id in (1,3) and inst_date < date(now())", [])
       .stream();
