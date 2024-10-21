@@ -1,8 +1,8 @@
 const path = require("path");
-const mysql = require("../connector/mysql");
+const mysql = require("../../connector/mysql");
 const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
-const logger = require("../logger/logger");
+const logger = require("../../logger/logger");
 const {
   Worker,
   isMainThread,

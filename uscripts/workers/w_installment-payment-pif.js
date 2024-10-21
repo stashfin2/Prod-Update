@@ -12,7 +12,7 @@ const {
 const os = require("os");
 
 const BATCH_SIZE = Number(process.env.STREAM_BATCH_SIZE || 1000);
-const NUM_WORKERS = 20 || os.cpus().length;
+const NUM_WORKERS = 40 || os.cpus().length;
 console.log("Number of initial workers", NUM_WORKERS);
 
 if (isMainThread) {

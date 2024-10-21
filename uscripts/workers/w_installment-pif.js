@@ -1,8 +1,8 @@
 const path = require("path");
-const mysql = require("../connector/mysql");
+const mysql = require("../../connector/mysql");
 const { pipeline } = require("node:stream/promises");
 const { Transform } = require("node:stream");
-const logger = require("../logger/logger");
+const logger = require("../../logger/logger");
 const {
   Worker,
   isMainThread,
@@ -12,7 +12,7 @@ const {
 const os = require("os");
 
 const BATCH_SIZE = Number(process.env.STREAM_BATCH_SIZE || 100);
-const NUM_WORKERS = 20 || os.cpus().length;
+const NUM_WORKERS = 40 || os.cpus().length;
 console.log("Number of initial workers", NUM_WORKERS);
 
 if (isMainThread) {
@@ -26,7 +26,7 @@ if (isMainThread) {
     try {
       //const conn = await mysql.getConnections();
       const [totalCount] = await mysql.query(
-        "SELECT COUNT(*) as count FROM fip_t WHERE is_done = 0"
+        "SELECT COUNT(*) as count FROM pif_t WHERE is_done = 0"
       );
       console.log("Total count:", totalCount);
       const total = totalCount.count;
@@ -74,7 +74,7 @@ if (isMainThread) {
 
     try {
       const rows = await mysql.query(
-        "SELECT * FROM fip_t WHERE is_done = 0 LIMIT ? OFFSET ?",
+        "SELECT * FROM pif_t WHERE is_done = 0 LIMIT ? OFFSET ?",
         [batchSize, offset]
       );
 
@@ -102,7 +102,8 @@ if (isMainThread) {
   const processChunk = async (data) => {
     const loanIds = data.map((each) => each.loan_id);
     const loanIdString = loanIds.join(",");
-    const whereClauses = data
+    let copyCreds = JSON.parse(JSON.stringify(data));
+    const whereClauses = copyCreds
       .map(
         (item) =>
           `(customer_id = ${item.customer_id} AND loan_id = ${item.loan_id})`
@@ -114,18 +115,15 @@ if (isMainThread) {
     try {
       const [loanTapeInstallments, deleteDataFromProd] = await Promise.all([
         getInstallments(loanIdString),
-        deleteInstallmentsFromProd(loanIdString),
+        await deleteInstallmentsFromProd(loanIdString, {}),
       ]);
 
-      await insertInstallments(loanTapeInstallments);
-
-      logger.info("updating loan_tape_data table for committing status");
+      await insertInstallments(loanTapeInstallments, {});
       await mysql.query(
-        `UPDATE fip_t SET is_done = 1 WHERE ${whereClauses}`,
+        `update pif_t set is_done = 1 where ${whereClauses}`,
         [],
         "loan-tape"
       );
-
       logger.info(
         `Successfully performed all the operations and starting with another batch`
       );
@@ -136,77 +134,89 @@ if (isMainThread) {
     }
   };
 
-  const deleteInstallmentsFromProd = async (loanIdString) => {
-    try {
-      logger.info(
-        "Initiating the installments deletion process from installment_fip table in the production database"
-      );
-      const deleteDataFromProd = `DELETE FROM installment_fip WHERE loan_id IN (${loanIdString})`;
-      const deleteOp = await mysql.query(deleteDataFromProd, [], "prod");
-      logger.info(
-        `Successfully completed the installments deletion process from the production database`
-      );
-      return deleteOp;
-    } catch (error) {
-      logger.error(
-        `Error while deleting installments from the installment-fip table for (${loanIdString})`
-      );
-      logger.error("Cause of the error is:>", error);
-      throw error;
-    }
+  const deleteInstallmentsFromProd = (loanIdString, conn) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        logger.info(
+          "Initiating the installments deletion process from installment_pif table in the production database"
+        );
+        const deleteDataFromProd = `DELETE FROM installment_pif WHERE loan_id in (${loanIdString})`;
+        const deleteOp = await mysql.query(
+          deleteDataFromProd,
+          [],
+          "prod",
+          conn
+        );
+        logger.info(
+          `Successfully completed the installments deletion process from the production database`
+        );
+        resolve(deleteOp);
+      } catch (error) {
+        logger.error(
+          `Error while deleting installments from the installment-pif table for (${loanIdString})`
+        );
+        logger.error("Cause of the error is:>", error);
+        reject(error);
+      }
+    });
   };
 
-  const getInstallments = async (loanIdString) => {
-    try {
-      logger.info(
-        `Getting the installments from the Loan-Tape database for inserting`
-      );
-      const loanTapeInstallments = await mysql.query(
-        `SELECT * FROM installment_fip WHERE loan_id IN (${loanIdString}) AND is_delete = 0`,
-        [],
-        "loan-tape"
-      );
-      logger.info(`Got the installments from the Loan-Tape database`);
-      return loanTapeInstallments;
-    } catch (error) {
-      logger.error(
-        `Error while getting installments from the Loan-tape database for (${loanIdString}).`
-      );
-      logger.error(
-        `Error which is Encountered while getting the installments from the Loan-tape database is ${error}`
-      );
-      throw error;
-    }
+  const getInstallments = (loanIdString) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        logger.info(
+          `Getting the installments from the Loan-Tape database for inserting`
+        );
+        const loanTapeInstallments = await mysql.query(
+          `Select * from installment_pif where loan_id in (${loanIdString}) and is_delete = 0`,
+          [],
+          "loan-tape"
+        );
+        logger.info(`Got the installments from the Loan-Tape database`);
+        resolve(loanTapeInstallments);
+      } catch (error) {
+        logger.error(
+          `Error while getting installments from the Loan-tape database for (${loanIdString}).`
+        );
+        logger.error(
+          `Error which is Encountered while getting the installments from the Loan-tape database is ${error}`
+        );
+        reject(error);
+      }
+    });
   };
 
-  const insertInstallments = async (loanTapeInstallments) => {
-    try {
-      const insertInstallmentsQuery = `INSERT INTO installment_fip (
-        entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, 
-        inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest, 
-        amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date, 
-        starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
-        foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
-        amort_adjusment, payment_id, cashback, version) VALUES ?`;
-      const installments = mapDataToInsertArray(loanTapeInstallments);
-      const insertOp = await mysql.query(
-        insertInstallmentsQuery,
-        [installments],
-        "prod"
-      );
-      return insertOp;
-    } catch (error) {
-      logger.error(
-        `Error while inserting the installments in the prod database:`,
-        error
-      );
-      throw error;
-    }
+  const insertInstallments = (loanTapeInstallments, conn) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const insertInstallmentsQuery = `INSERT INTO installment_pif (
+                entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, 
+                inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest, 
+                amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date, 
+                starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
+                foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
+                amort_adjusment, payment_id, cashback, version) VALUES ?`;
+        const installments = mapDataToInsertArray(loanTapeInstallments);
+        const insertOp = await mysql.query(
+          insertInstallmentsQuery,
+          [installments],
+          "prod",
+          conn
+        );
+        resolve(insertOp);
+      } catch (error) {
+        logger.error(
+          `Error while inserting the installments in the prod database:`,
+          error
+        );
+        reject(error);
+      }
+    });
   };
 
   const mapDataToInsertArray = (instalments) => {
     try {
-      return instalments.map((data) => [
+      const valueArrays = instalments.map((data) => [
         data.entity_id,
         data.customer_id,
         data.loan_id,
@@ -243,9 +253,10 @@ if (isMainThread) {
         data.cashback,
         data.version,
       ]);
+      return valueArrays;
     } catch (error) {
       logger.error(
-        `Error while creating the installments compatible array for installment-fip table:`,
+        `Error while creating the installments compatible array for installment-pif table:`,
         error
       );
       throw error;
