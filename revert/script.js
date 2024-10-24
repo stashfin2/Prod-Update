@@ -12,7 +12,7 @@ const {
 const os = require("os");
 
 const BATCH_SIZE = Number(process.env.STREAM_BATCH_SIZE || 1000);
-const NUM_WORKERS = 20 || os.cpus().length;
+const NUM_WORKERS = 100;
 console.log("Number of initial workers", NUM_WORKERS);
 
 if (isMainThread) {
@@ -26,7 +26,7 @@ if (isMainThread) {
     try {
       //const conn = await mysql.getConnections();
       const [totalCount] = await mysql.query(
-        "SELECT customer_id from loan_tape_copy where is_done = 0"
+        "SELECT customer_id from loan_tape_data_copy where is_done = 0"
       );
       console.log("Total count:", totalCount);
       const total = totalCount.count;
@@ -74,7 +74,7 @@ if (isMainThread) {
 
     try {
       const rows = await mysql.query(
-        "SELECT distinct customer_id from loan_tape_copy where is_done = 0",
+        "SELECT customer_id from loan_tape_data_copy where is_done = 0",
         [batchSize, offset]
       );
 
@@ -178,7 +178,7 @@ if (isMainThread) {
                 utm_source_changed = ?,
                 utm_term = ?,
                 utm_url = ?
-            WHERE id = ?`
+            WHERE customer_id  = ? and id = ?`
                 const loanUpd = loanRecords.map(each => mysql.query(query, [
                     each.add_user_id,
                     each.advance_emi_tenure,
@@ -251,10 +251,10 @@ if (isMainThread) {
                     each.utm_source_changed,
                     each.utm_term,
                     each.utm_url,
+                    each.customer_id,
                     each.id
                 ], 'prod'))
-                const upsl = await mysql.query(`update loan_tape_data set sl = 1 where loan_id in (${loanIdStrings})`, [], 'loan-tape')
-                await Promise.all([loanUpd, upsl]).then((res) => {
+                await Promise.all(loanUpd).then((res) => {
                     logger.info(`Updated ${loanRecords.length} in the st_loan in the prod db.`)
                 }).catch((error) => {
                     logger.error(`Error while updating the st_loan table on prod db:`, error)
@@ -291,7 +291,7 @@ if (isMainThread) {
                 await deletePenaltyDetailsPif(customerIdString)
                 const penaltiesPif = await getPenaltiesDetailsPif(customerIdString)
                 await insertPenaltiesPif(penaltiesPif)
-                const upd = await mysql.query(`update loan_tape_copy set is_done = 1 where customer_id in (${customerIdString})`, [], 'prod')
+                const upd = await mysql.query(`update loan_tape_data_copy set is_done = 1 where customer_id in (${customerIdString})`, [], 'prod')
                 const delLtData = await mysql.query(`Delete * from loan_tape_data where customer_id in (${customerIdString})`, [], 'prod')
                 await Promise.all([upd, delLtData]).then((res) =>{
                     logger.info(`Successfully completed the one cycles of data migration`)
@@ -332,9 +332,9 @@ if (isMainThread) {
         `Getting the installments from the Loan-Tape database for inserting`
       );
       const loanTapeInstallments = await mysql.query(
-        `SELECT * FROM installment_fip_cl WHERE customer_id IN (${customerIdString}) AND is_delete = 0`,
+        `SELECT * FROM installment_fip_cl WHERE customer_id IN (${customerIdString}) AND is_delete = 0 and inst_status = 1`,
         [],
-        "loan-tape"
+        "prod"
       );
       logger.info(`Got the installments from the Loan-Tape database`);
       return loanTapeInstallments;
@@ -358,7 +358,7 @@ if (isMainThread) {
         starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
         foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
         amort_adjusment, payment_id, cashback, version) VALUES ?`;
-      const installments = mapDataToInsertArray(loanTapeInstallments);
+      const installments = mapDataToInsertArray(loanTapeInstallments, fip);
       const insertOp = await mysql.query(
         insertInstallmentsQuery,
         [installments],
@@ -402,7 +402,7 @@ if (isMainThread) {
         `Getting the installments from the Loan-Tape database for inserting`
       );
       const loanTapeInstallments = await mysql.query(
-        `SELECT * FROM installment_pif_cl WHERE customer_id IN (${customerIdString}) AND is_delete = 0`,
+        `SELECT * FROM installment_pif_cl WHERE customer_id IN (${customerIdString}) AND is_delete = 0 AND inst_status = 1`,
         [],
         "prod"
       );
@@ -428,7 +428,7 @@ if (isMainThread) {
         starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
         foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
         amort_adjusment, payment_id, cashback, version) VALUES ?`;
-      const installments = mapDataToInsertArray(loanTapeInstallments);
+      const installments = mapDataToInsertArray(loanTapeInstallments, 'pif');
       const insertOp = await mysql.query(
         insertInstallmentsQuery,
         [installments],
@@ -444,10 +444,10 @@ if (isMainThread) {
     }
   };
 
-  const mapDataToInsertArray = (instalments) => {
+  const mapDataToInsertArray = (instalments, flag) => {
     try {
       return instalments.map((data) => [
-        data.id,
+        flag === 'fip' ? data.id + 20000000000000 : data.id + 1000000000,
         data.entity_id,
         data.customer_id,
         data.loan_id,
@@ -527,7 +527,6 @@ if (isMainThread) {
 
   const createBillCompatibleArray = (arrayOfObjects) => {
     return arrayOfObjects.map((obj) => [
-      obj.id,
       obj.customer_id,
       obj.loan_id,
       obj.approved_amount,
@@ -558,7 +557,7 @@ if (isMainThread) {
       logger.info(
         `Initiating the insertion process in the st_bill_detail table`
       );
-      const insertQuery = `INSERT INTO st_bill_detail (id,customer_id, loan_id, approved_amount, bill_amount, processing_fee, credit_shield_fee, cgst, igst, sgst, gst, upfront, bill_date, paid_amount, outstanding_amount, emi_paid, tenure, create_date, update_date, status, paid_status, processing_fees_rate) VALUES  ?`;
+      const insertQuery = `INSERT INTO st_bill_detail (customer_id, loan_id, approved_amount, bill_amount, processing_fee, credit_shield_fee, cgst, igst, sgst, gst, upfront, bill_date, paid_amount, outstanding_amount, emi_paid, tenure, create_date, update_date, status, paid_status, processing_fees_rate) VALUES  ?`;
       const penaltyArray = createBillCompatibleArray(data);
       if (penaltyArray.length === 0) {
         logger.info(
@@ -621,7 +620,7 @@ if (isMainThread) {
       logger.info(
         "Initializing the insertion process in the installment_payment_fip table."
       );
-      paymentsArray = createPaymentInstPif(paymentsArray)
+      paymentsArray = createPaymentInstPif(paymentsArray, 'fip')
       const insertQuery =
         "Insert into installment_payment_fip (id, customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
       if (paymentsArray.length === 0) {
@@ -687,8 +686,9 @@ if (isMainThread) {
       logger.info(
         "Initializing the insertion process in the installment_payment_pif table."
       );
+      paymentsArray = createPaymentInstPif(paymentsArray, 'pif')
       const insertQuery =
-        "Insert into installment_payment_pif (id, customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
+        "Insert into installment_payment_pif ( customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
       if (paymentsArray.length === 0) {
         logger.info(
           "No payment present to insert in installment-payment-pif table"
@@ -710,20 +710,19 @@ if (isMainThread) {
   };
 
 
-  const createPaymentInstPif = (array) => {
+  const createPaymentInstPif = (array, fl) => {
     try {
       const compatibleArray = array.map((item) => [
-        item.id,
         item.customer_id,
         item.loan_id,
-        item.inst_id,
+        fl==='pif' ? item.inst_id + 1000000000 : item.inst_id + 20000000000000,
         item.inst_number,
         item.code_payment_type,
         item.amount_payment,
         item.payment_status,
         item.payment_pairing_date,
         item.payment_date,
-        item.payment_id,
+        item.payment_id + 60000000
       ]);
       return compatibleArray;
     } catch (error) {
@@ -771,7 +770,7 @@ if (isMainThread) {
   const createOverallPaymentCompatibleArray = (payments) => {
     try {
       return payments.map((payment) => [
-        payment.id,
+        payment.id + 60000000,
         payment.customer_id,
         payment.loan_id,
         payment.amt_payment,
@@ -789,7 +788,7 @@ if (isMainThread) {
         payment.create_date,
         payment.extra_amount,
         payment.extra_amount_pif,
-        "others",
+        payment.remarks,
         payment.add_user_id,
         payment.update_user_id,
         payment.is_delete,
@@ -851,7 +850,7 @@ if (isMainThread) {
         `Initiating the insertion process in the penalty_details table`
       );
       const insertQuery = `INSERT INTO penalty_details (id, customer_id,loan_id,instalment_id,instalment_number,penalty_amount,penalty_date,penalty_received,penalty_received_date,outstanding_penalty,is_paid,panalty_type_id,payment_id,foreclose_status,status,create_date) VALUES ?`;
-      const penaltyArray = createPenaltyCompatibleArray(data);
+      const penaltyArray = createPenaltyCompatibleArray(data, 'fip');
       if (penaltyArray.length === 0) {
         logger.info(
           "there are no penalties present to insert with the given loanIds:",
@@ -901,7 +900,7 @@ if (isMainThread) {
         `Initiating the insertion process in the penalty_details table`
       );
       const insertQuery = `INSERT INTO penalty_details_pif (id, customer_id,loan_id,instalment_id,instalment_number,penalty_amount,penalty_date,penalty_received,penalty_received_date,outstanding_penalty,is_paid,panalty_type_id,payment_id,foreclose_status,status,create_date) VALUES ?`;
-      const penaltyArray = createPenaltyCompatibleArray(data);
+      const penaltyArray = createPenaltyCompatibleArray(data, 'pif');
       if (penaltyArray.length === 0) {
         logger.info(
           "there are no penalties present to insert with the given loanIds:",
@@ -923,13 +922,13 @@ if (isMainThread) {
     }
   };
 
-  const createPenaltyCompatibleArray = (penalties) => {
+  const createPenaltyCompatibleArray = (penalties, flag) => {
     try {
       return penalties.map((penalty) => [
-        penalty.id,
+        flag === 'pif' ?  penalty.id + 1000000000 : penalty.id + 20000000000000,
         penalty.customer_id,
         penalty.loan_id,
-        penalty.instalment_id,
+        flag === 'pif' ? penalty.instalment_id + 1000000000: penalty.instalment_id + 20000000000000 ,
         penalty.instalment_number,
         penalty.penalty_amount,
         penalty.penalty_date,
