@@ -53,7 +53,9 @@ const _mysql = {
         conn.inTransaction = true;
         resolve(conn);
       } catch (error) {
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         logger.error("Error occured in beginTransaction:", error);
         reject(error);
       }
@@ -72,10 +74,17 @@ const _mysql = {
         }
         const query = util.promisify(conn.query).bind(conn); // Bind conn as the context
         const res = await query(queryStr, params);
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         return resolve(res);
       } catch (error) {
-        conn.release();
+        console.log("xooxoooxooox");
+        if (conn) {
+          console.log("conn ..", conn);
+
+          conn.release();
+        }
         logger.error(
           `Error while querying the database for ${location}:`,
           error
@@ -92,7 +101,9 @@ const _mysql = {
         await end();
         resolve();
       } catch (error) {
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         logger.error(`Error while ending the connection:`, error);
         reject(error);
       }
@@ -105,12 +116,16 @@ const _mysql = {
         const commit = util.promisify(conn.commit).bind(conn);
         await commit();
         conn.inTransaction = false;
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         resolve();
       } catch (error) {
         logger.error("Error occured in commit function:", error);
         await this.rollback(conn);
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         reject(error);
       }
     });
@@ -122,10 +137,14 @@ const _mysql = {
         const rollback = util.promisify(conn.rollback).bind(conn);
         let res = await rollback();
         conn.inTransaction = false;
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         resolve(res);
       } catch (error) {
-        conn.release();
+        if (conn) {
+          conn.release();
+        }
         logger.error("Error occured in rollback function:", error);
         reject(error);
       }

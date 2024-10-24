@@ -9,7 +9,7 @@ const {
 } = require("worker_threads");
 const os = require("os");
 
-const BATCH_SIZE = Number(process.env.STREAM_BATCH_SIZE || 1000);
+const BATCH_SIZE = 15;
 const NUM_WORKERS = 100;
 console.log("Number of initial workers", NUM_WORKERS);
 
@@ -23,11 +23,11 @@ if (isMainThread) {
   const processJob = async () => {
     try {
       //const conn = await mysql.getConnections();
-      const [totalCount] = await mysql.query(
-        "SELECT customer_id from loan_tape_data_copy where is_done = 0"
+      const totalCount = await mysql.query(
+        "SELECT count(*) as count from loan_tape_data_copy where is_done = 0 ;"
       );
-      console.log("Total count:", totalCount);
-      const total = totalCount.count;
+      console.log(totalCount);
+      const total = totalCount[0].count;
 
       const workerPromises = [];
       for (let i = 0; i < NUM_WORKERS; i++) {
@@ -69,10 +69,11 @@ if (isMainThread) {
 } else {
   const processWorker = async () => {
     const { workerId, batchSize, offset } = workerData;
-
+    console.log("batchSize:", batchSize);
+    console.log("offset:", offset);
     try {
       const rows = await mysql.query(
-        "SELECT customer_id from loan_tape_data_copy where is_done = 0",
+        "SELECT customer_id from loan_tape_data_copy where is_done = 0 LIMIT ? OFFSET ?",
         [batchSize, offset]
       );
 
@@ -101,202 +102,78 @@ if (isMainThread) {
     const customerId = data.map((each) => each.customer_id);
     const customerIdString = customerId.join(",");
     try {
-        const loanRecords = await mysql.query(`Select * from st_loan where customer_id in (${customerIdString})`, [], 'prod')
-                logger.info("Initializing the updation process of st_loan----")
-                const query = `UPDATE st_loan
-                SET 
-                add_user_id = ?,
-                advance_emi_tenure = ?,
-                advance_emi_total = ?,
-                agent_code = ?,
-                approval_comment = ?,
-                approved_amount = ?,
-                approved_by = ?,
-                approved_disbursal_date = ?,
-                approved_emi_start_date = ?,
-                approved_rate = ?,
-                approved_tenure = ?,
-                auto_processing = ?,
-                browser = ?,
-                closed_by = ?,
-                colender = ?,
-                colender_agreement = ?,
-                create_date = ?,
-                customer_id = ?,
-                device = ?,
-                disbursal_amount = ?,
-                disbursal_loan_rate = ?,
-                disbursal_loan_tenure = ?,
-                disbursal_mode = ?,
-                disbursed_by = ?,
-                dmi_eligible = ?,
-                el_form = ?,
-                extra_params = ?,
-                final_disbursed_amount = ?,
-                first_approval_date = ?,
-                fullerton_eligible = ?,
-                incred_eligible = ?,
-                ip_address = ?,
-                lead_assign_id = ?,
-                lead_status = ?,
-                loan_amount = ?,
-                loan_approval_date = ?,
-                loan_closure_date = ?,
-                loan_creation_date = ?,
-                loan_disbursal_date = ?,
-                loan_processing_mode = ?,
-                loan_rate = ?,
-                loan_reason_id = ?,
-                loan_status = ?,
-                loan_tenure = ?,
-                loan_type = ?,
-                loc_mandatory_loan = ?,
-                loc_request = ?,
-                looking_for = ?,
-                organization_id = ?,
-                origin = ?,
-                original_utm_source = ?,
-                other_calculate_gst = ?,
-                other_fees = ?,
-                processing_fees_rate = ?,
-                product_code = ?,
-                random_allotment = ?,
-                random_loan_id = ?,
-                rate_per_day = ?,
-                rejected_by = ?,
-                spdc_amount = ?,
-                state_capture = ?,
-                status = ?,
-                update_date = ?,
-                update_user_id = ?,
-                utm_campaign = ?,
-                utm_content = ?,
-                utm_medium = ?,
-                utm_source = ?,
-                utm_source_changed = ?,
-                utm_term = ?,
-                utm_url = ?
-            WHERE customer_id  = ? and id = ?`
-                const loanUpd = loanRecords.map(each => mysql.query(query, [
-                    each.add_user_id,
-                    each.advance_emi_tenure,
-                    each.advance_emi_total,
-                    each.agent_code,
-                    each.approval_comment,
-                    each.approved_amount,
-                    each.approved_by,
-                    each.approved_disbursal_date,
-                    each.approved_emi_start_date,
-                    each.approved_rate,
-                    each.approved_tenure,
-                    each.auto_processing,
-                    each.browser,
-                    each.closed_by,
-                    each.colender,
-                    each.colender_agreement,
-                    each.create_date,
-                    each.customer_id,
-                    each.device,
-                    each.disbursal_amount,
-                    each.disbursal_loan_rate,
-                    each.disbursal_loan_tenure,
-                    each.disbursal_mode,
-                    each.disbursed_by,
-                    each.dmi_eligible,
-                    each.el_form,
-                    each.extra_params,
-                    each.final_disbursed_amount,
-                    each.first_approval_date,
-                    each.fullerton_eligible,
-                    each.incred_eligible,
-                    each.ip_address,
-                    each.lead_assign_id,
-                    each.lead_status,
-                    each.loan_amount,
-                    each.loan_approval_date,
-                    each.loan_closure_date,
-                    each.loan_creation_date,
-                    each.loan_disbursal_date,
-                    each.loan_processing_mode,
-                    each.loan_rate,
-                    each.loan_reason_id,
-                    each.loan_status,
-                    each.loan_tenure,
-                    each.loan_type,
-                    each.loc_mandatory_loan,
-                    each.loc_request,
-                    each.looking_for,
-                    each.organization_id,
-                    each.origin,
-                    each.original_utm_source,
-                    each.other_calculate_gst,
-                    each.other_fees,
-                    each.processing_fees_rate,
-                    each.product_code,
-                    each.random_allotment,
-                    each.random_loan_id,
-                    each.rate_per_day,
-                    each.rejected_by,
-                    each.spdc_amount,
-                    each.state_capture,
-                    each.status,
-                    each.update_date,
-                    each.update_user_id,
-                    each.utm_campaign,
-                    each.utm_content,
-                    each.utm_medium,
-                    each.utm_source,
-                    each.utm_source_changed,
-                    each.utm_term,
-                    each.utm_url,
-                    each.customer_id,
-                    each.id
-                ], 'prod'))
-                await Promise.all(loanUpd).then((res) => {
-                    logger.info(`Updated ${loanRecords.length} in the st_loan in the prod db.`)
-                }).catch((error) => {
-                    logger.error(`Error while updating the st_loan table on prod db:`, error)
-                })
+      const loanRecords = await mysql.query(
+        `Select * from st_loan where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      logger.info("Initializing the updation process of st_loan----");
 
-                await deleteLoanTapeInstallmentsFromProdFip(customerIdString)
-                const installmentsFip = await getInstallmentsFip(customerIdString)
-                await insertInstallmentsFip(installmentsFip)
+      console.log("Here again ...");
+      await deleteLoanTapeInstallmentsFromProdFip(customerIdString);
+      const installmentsFip = await getInstallmentsFip(customerIdString);
+      const insfip = await insertInstallmentsFip(installmentsFip);
 
-                await deleteLoanTapeInstallmentsFromProdPif(customerIdString)
-                const installmentsPif = await getInstallmentsPif(customerIdString)
-                await insertInstallmentsPif(installmentsPif)
+      await deleteLoanTapeInstallmentsFromProdPif(customerIdString);
+      const installmentsPif = await getInstallmentsPif(customerIdString);
+      const inspif = await insertInstallmentsPif(installmentsPif);
 
-                await deleteDataFromBillDetail(customerIdString)
-                const stBills = await getBills(customerIdString)
-                await insertStBillDetails(stBills)
+      await deleteDataFromBillDetail(customerIdString);
+      const stBills = await getBills(customerIdString);
+      const stbi = await insertStBillDetails(stBills);
 
-                await deleteInstallmentsFromProdPaymentFip(customerIdString)
-                const paymentsFip = await getInstallmentsPaymentFip(customerIdString)
-                await insertIntoInstallmentPaymentFip(paymentsFip)
+      await deleteInstallmentsFromProdPaymentFip(customerIdString);
+      const paymentsFip = await getInstallmentsPaymentFip(customerIdString);
+      const payfip = await insertIntoInstallmentPaymentFip(paymentsFip);
 
-                await deleteInstallmentsFromProdPaymentPif(customerIdString)
-                const paymentsPif = await getInstallmentsPaymentPif(customerIdString)
-                await insertIntoInstallmentPaymentPif(paymentsPif)
+      await deleteInstallmentsFromProdPaymentPif(customerIdString);
+      const paymentsPif = await getInstallmentsPaymentPif(customerIdString);
+      const payPif = await insertIntoInstallmentPaymentPif(paymentsPif);
 
-                await deleteDataFromOverallPayment(customerIdString)
-                const overallPayments = await getOverallPayments(customerIdString)
-                await insertIntoOverallPayments(overallPayments)
+      await deleteDataFromOverallPayment(customerIdString);
+      const overallPayments = await getOverallPayments(customerIdString);
+      const ovPay = await insertIntoOverallPayments(overallPayments);
 
-                await deletePenaltyDetailsFip(customerIdString)
-                const penaltiesFip = await getPenaltiesDetailsFip(customerIdString)
-                await insertPenaltiesFip(penaltiesFip)
+      await deletePenaltyDetailsFip(customerIdString);
+      const penaltiesFip = await getPenaltiesDetailsFip(customerIdString);
+      const penalFip = await insertPenaltiesFip(penaltiesFip);
 
-                await deletePenaltyDetailsPif(customerIdString)
-                const penaltiesPif = await getPenaltiesDetailsPif(customerIdString)
-                await insertPenaltiesPif(penaltiesPif)
-                const upd = await mysql.query(`update loan_tape_data_copy set is_done = 1 where customer_id in (${customerIdString})`, [], 'prod')
-                const delLtData = await mysql.query(`Delete * from loan_tape_data where customer_id in (${customerIdString})`, [], 'prod')
-                await Promise.all([upd, delLtData]).then((res) =>{
-                    logger.info(`Successfully completed the one cycles of data migration`)
-                }).catch(error => {
-                    logger.error(`Error while performing some operations on one cycle:`, error)
-                })
-
+      await deletePenaltyDetailsPif(customerIdString);
+      const penaltiesPif = await getPenaltiesDetailsPif(customerIdString);
+      const penalPif = await insertPenaltiesPif(penaltiesPif);
+      const upd = await mysql.query(
+        `update loan_tape_data_copy set is_done = 2 where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      const delLtData = await mysql.query(
+        `Delete from loan_tape_data where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      await Promise.all([
+        insfip,
+        inspif,
+        stbi,
+        payfip,
+        payPif,
+        ovPay,
+        penalFip,
+        penalPif,
+        upd,
+        delLtData,
+      ])
+        .then((res) => {
+          logger.info(
+            `Successfully completed the one cycles of data migration`
+          );
+        })
+        .catch((error) => {
+          logger.error(
+            `Error while performing some operations on one cycle:`,
+            error
+          );
+        });
     } catch (error) {
       //await conn.rollback();
       logger.error(`Error processing chunk:`, error);
@@ -349,14 +226,11 @@ if (isMainThread) {
 
   const insertInstallmentsFip = async (loanTapeInstallments) => {
     try {
-      const insertInstallmentsQuery = `INSERT INTO installment_fip (
-        id,entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, 
-        inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest, 
-        amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date, 
-        starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
-        foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
-        amort_adjusment, payment_id, cashback, version) VALUES ?`;
-      const installments = mapDataToInsertArray(loanTapeInstallments, fip);
+      const insertInstallmentsQuery = `INSERT INTO installment_fip (id,entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest, amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date,  starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, amort_adjusment, payment_id, cashback, version) VALUES ?`;
+      const installments = mapDataToInsertArray(loanTapeInstallments, "fip");
+      if (installments.length === 0) {
+        return;
+      }
       const insertOp = await mysql.query(
         insertInstallmentsQuery,
         [installments],
@@ -372,7 +246,7 @@ if (isMainThread) {
     }
   };
 
- // installments pif
+  // installments pif
   const deleteLoanTapeInstallmentsFromProdPif = async (customerIdString) => {
     try {
       logger.info(
@@ -392,7 +266,6 @@ if (isMainThread) {
       throw error;
     }
   };
-
 
   const getInstallmentsPif = async (customerIdString) => {
     try {
@@ -419,14 +292,11 @@ if (isMainThread) {
 
   const insertInstallmentsPif = async (loanTapeInstallments) => {
     try {
-      const insertInstallmentsQuery = `INSERT INTO installment_pif (
-        id,entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, 
-        inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest, 
-        amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date, 
-        starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, 
-        foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, 
-        amort_adjusment, payment_id, cashback, version) VALUES ?`;
-      const installments = mapDataToInsertArray(loanTapeInstallments, 'pif');
+      const insertInstallmentsQuery = `INSERT INTO installment_pif ( id,entity_id, customer_id, loan_id, inst_number, inst_amount, inst_principal, inst_interest, inst_fee, inst_discount, received_principal, received_interest, received_fee, amount_outstanding_interest,  amount_outstanding_principal, received_extra_charges, inst_date, create_date, last_paying_date, starting_balance, ending_balance, days_past_due, days_past_due_tolerance, emi_status_id, foreclose_status, foreclose_date, update_date, add_user_id, update_user_id, inst_status, is_delete, customer_facing, amort_adjusment, payment_id, cashback, version) VALUES  ?`;
+      const installments = mapDataToInsertArray(loanTapeInstallments, "pif");
+      if (installments.length === 0) {
+        return;
+      }
       const insertOp = await mysql.query(
         insertInstallmentsQuery,
         [installments],
@@ -445,7 +315,7 @@ if (isMainThread) {
   const mapDataToInsertArray = (instalments, flag) => {
     try {
       return instalments.map((data) => [
-        flag === 'fip' ? data.id + 20000000000000 : data.id + 1000000000,
+        flag === "fip" ? data.id + 20000000000000 : data.id + 1000000000,
         data.entity_id,
         data.customer_id,
         data.loan_id,
@@ -490,7 +360,6 @@ if (isMainThread) {
       throw error;
     }
   };
-  
 
   // st_bill_details
   const deleteDataFromBillDetail = async (customerIdString) => {
@@ -508,20 +377,29 @@ if (isMainThread) {
       );
       return result;
     } catch (error) {
-      logger.error("Error occured while deleting data from st_bill_details: ", error);
+      logger.error(
+        "Error occured while deleting data from st_bill_details: ",
+        error
+      );
       throw error;
     }
   };
 
   const getBills = async (customerIdString) => {
-    try{
-        const bills = await mysql.query(`select * from st_bill_detail_cl where customer_id in (${customerIdString})`, [], 'prod')
-        return bills
-    }catch(error){
-        logger.error(`Error while getting bill details from st_bill_details_cl table for customerIds: (${customerIdString})`)
-        throw error
+    try {
+      const bills = await mysql.query(
+        `select * from st_bill_detail_cl where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      return bills;
+    } catch (error) {
+      logger.error(
+        `Error while getting bill details from st_bill_details_cl table for customerIds: (${customerIdString})`
+      );
+      throw error;
     }
-  }
+  };
 
   const createBillCompatibleArray = (arrayOfObjects) => {
     return arrayOfObjects.map((obj) => [
@@ -549,17 +427,15 @@ if (isMainThread) {
     ]);
   };
 
-
   const insertStBillDetails = async (data) => {
     try {
       logger.info(
         `Initiating the insertion process in the st_bill_detail table`
       );
-      const insertQuery = `INSERT INTO st_bill_detail (customer_id, loan_id, approved_amount, bill_amount, processing_fee, credit_shield_fee, cgst, igst, sgst, gst, upfront, bill_date, paid_amount, outstanding_amount, emi_paid, tenure, create_date, update_date, status, paid_status, processing_fees_rate) VALUES  ?`;
+      const insertQuery = `INSERT INTO st_bill_detail (customer_id, loan_id,  approved_amount, bill_amount,  processing_fee,  credit_shield_fee, cgst, igst, sgst, gst, upfront, bill_date, paid_amount, outstanding_amount, emi_paid, tenure, create_date, update_date, status, paid_status, processing_fees_rate) VALUES  ?`;
       const penaltyArray = createBillCompatibleArray(data);
       if (penaltyArray.length === 0) {
-        logger.info(
-          "there are no bills present to insert");
+        logger.info("there are no bills present to insert");
         return true;
       }
       const result = await mysql.query(insertQuery, [penaltyArray], "prod");
@@ -575,7 +451,6 @@ if (isMainThread) {
       throw error;
     }
   };
-
 
   // paymentsFip
   const deleteInstallmentsFromProdPaymentFip = (customerIdString) => {
@@ -601,26 +476,37 @@ if (isMainThread) {
   };
 
   const getInstallmentsPaymentFip = (customerIdString) => {
-    return new Promise(async(resolve, reject) => {
-        try{
-            logger.info(`Getting the installments_payments_fip_cl from the cl_tables for customerids = ${customerIdString}`)
-            const installments = await mysql.query(`Select * from installment_payment_fip_cl where customer_id in (${customerIdString})`, [], 'prod')
-            resolve(installments)
-        }catch(error){
-            logger.error(`Error while getting payments_fip_cl for customerIds:(${customerIdString})`)
-            reject(error)
-        }
-    })
-  }
+    return new Promise(async (resolve, reject) => {
+      try {
+        logger.info(
+          `Getting the installments_payments_fip_cl from the cl_tables for customerids = ${customerIdString}`
+        );
+        const installments = await mysql.query(
+          `Select * from installment_payment_fip_cl where customer_id in (${customerIdString})`,
+          [],
+          "prod"
+        );
+        resolve(installments);
+      } catch (error) {
+        logger.error(
+          `Error while getting payments_fip_cl for customerIds:(${customerIdString})`
+        );
+        reject(error);
+      }
+    });
+  };
 
-  const insertIntoInstallmentPaymentFip = async (paymentsArray, customerIdString) => {
+  const insertIntoInstallmentPaymentFip = async (
+    paymentsArray,
+    customerIdString
+  ) => {
     try {
       logger.info(
         "Initializing the insertion process in the installment_payment_fip table."
       );
-      paymentsArray = createPaymentInstPif(paymentsArray, 'fip')
+      paymentsArray = createPaymentInstPif(paymentsArray, "fip");
       const insertQuery =
-        "Insert into installment_payment_fip (id, customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
+        "Insert into installment_payment_fip (customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
       if (paymentsArray.length === 0) {
         logger.info(
           "No payment present to insert in installment-payment-fip table"
@@ -640,7 +526,6 @@ if (isMainThread) {
       throw error;
     }
   };
-
 
   // payments Pif
   const deleteInstallmentsFromProdPaymentPif = (customerIdString) => {
@@ -666,25 +551,35 @@ if (isMainThread) {
   };
 
   const getInstallmentsPaymentPif = (customerIdString) => {
-    return new Promise(async(resolve, reject) => {
-        try{
-            logger.info(`Getting the installments_payments_pif_cl from the cl_tables for customerids = ${customerIdString}`)
-            const installments = await mysql.query(`Select * from installment_payment_fip_cl where customer_id in (${customerIdString})`, [], 'prod')
-            resolve(installments)
-        }catch(error){
-            logger.error(`Error while getting payments_fip_cl for customerIds:(${customerIdString})`)
-            reject(error)
-        }
-    })
-  }
+    return new Promise(async (resolve, reject) => {
+      try {
+        logger.info(
+          `Getting the installments_payments_pif_cl from the cl_tables for customerids = ${customerIdString}`
+        );
+        const installments = await mysql.query(
+          `Select * from installment_payment_pif_cl where customer_id in (${customerIdString})`,
+          [],
+          "prod"
+        );
+        resolve(installments);
+      } catch (error) {
+        logger.error(
+          `Error while getting payments_fip_cl for customerIds:(${customerIdString})`
+        );
+        reject(error);
+      }
+    });
+  };
 
-
-  const insertIntoInstallmentPaymentPif = async (paymentsArray, customerIdString) => {
+  const insertIntoInstallmentPaymentPif = async (
+    paymentsArray,
+    customerIdString
+  ) => {
     try {
       logger.info(
         "Initializing the insertion process in the installment_payment_pif table."
       );
-      paymentsArray = createPaymentInstPif(paymentsArray, 'pif')
+      paymentsArray = createPaymentInstPif(paymentsArray, "pif");
       const insertQuery =
         "Insert into installment_payment_pif ( customer_id, loan_id, inst_id, inst_number, code_payment_type, amount_payment, payment_status, payment_pairing_date, payment_date, payment_id) VALUES ?";
       if (paymentsArray.length === 0) {
@@ -707,20 +602,21 @@ if (isMainThread) {
     }
   };
 
-
   const createPaymentInstPif = (array, fl) => {
     try {
       const compatibleArray = array.map((item) => [
         item.customer_id,
         item.loan_id,
-        fl==='pif' ? item.inst_id + 1000000000 : item.inst_id + 20000000000000,
+        fl === "pif"
+          ? item.inst_id + 1000000000
+          : item.inst_id + 20000000000000,
         item.inst_number,
         item.code_payment_type,
         item.amount_payment,
         item.payment_status,
         item.payment_pairing_date,
         item.payment_date,
-        item.payment_id + 60000000
+        item.payment_id + 60000000,
       ]);
       return compatibleArray;
     } catch (error) {
@@ -752,18 +648,26 @@ if (isMainThread) {
     }
   };
 
-  const getOverallPayments = async(customerIdString) =>{
-    return new Promise(async(resolve, reject) => {
-        try{
-            logger.info(`Fetching payments from overall_payments_cl for customerids: (${customerIdString})`)
-            const ovPayments = await mysql.query(`Select * from overall_payment_cl where customer_id in (${customerIdString})`, [], 'prod')
-            resolve(ovPayments)
-        }catch(error){
-            logger.error(`Error while getting payments from overall_payments for customerid:(${customerIdString})`)
-            throw error
-        }
-    })
-  }
+  const getOverallPayments = async (customerIdString) => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        logger.info(
+          `Fetching payments from overall_payments_cl for customerids: (${customerIdString})`
+        );
+        const ovPayments = await mysql.query(
+          `Select * from overall_payment_cl where customer_id in (${customerIdString})`,
+          [],
+          "prod"
+        );
+        resolve(ovPayments);
+      } catch (error) {
+        logger.error(
+          `Error while getting payments from overall_payments for customerid:(${customerIdString})`
+        );
+        throw error;
+      }
+    });
+  };
 
   const createOverallPaymentCompatibleArray = (payments) => {
     try {
@@ -801,46 +705,60 @@ if (isMainThread) {
   };
 
   const insertIntoOverallPayments = async (paymentsArray, customerIdString) => {
-    try{
-        const paymentsData =
-            createOverallPaymentCompatibleArray(paymentsArray);
-        logger.info("Starting insertion into overall_payment table");
+    try {
+      const paymentsData = createOverallPaymentCompatibleArray(paymentsArray);
+      logger.info("Starting insertion into overall_payment table");
+      if (paymentsData.length === 0) {
+        return;
+      }
+      const result = await mysql.query(
+        `INSERT INTO overall_payment (id,customer_id, loan_id, amt_payment, received_date, cheque_number, urm_no, payment_channel, transaction_id, ref_no, utr_no, neft_bank, presentation_status, bounce_reason, presentation_date, create_date, extra_amount, extra_amount_pif, remarks, add_user_id, update_user_id, is_delete, is_refund, update_date, transaction_commit_status) VALUES ?`,
+        [paymentsData],
+        "prod"
+      );
 
-        const result = await mysql.query(
-            `INSERT INTO overall_payment (id,customer_id, loan_id, amt_payment, received_date, cheque_number, urm_no, payment_channel, transaction_id, ref_no, utr_no, neft_bank, presentation_status, bounce_reason, presentation_date, create_date, extra_amount, extra_amount_pif, remarks, add_user_id, update_user_id, is_delete, is_refund, update_date, transaction_commit_status) VALUES ?`,
-            [paymentsData],
-            "prod"
-        );
-
-        return result
-    }catch(error){
-        logger.error(`Error while inserting into overall payments:`,error)
-        throw error
+      return result;
+    } catch (error) {
+      logger.error(`Error while inserting into overall payments:`, error);
+      throw error;
     }
-  }
+  };
 
-// penalty_details_fip
-  const deletePenaltyDetailsFip = async(customerIdString) => {
-    try{
-        logger.info(`Initiating the deletion process from penalty details for customerId in (${customerIdString})`)
-        const delst = await mysql.query(`DELETE FROM penalty_details WHERE customer_id in (${customerIdString})`, [], 'prod')
-        return delst
-    }catch(error){
-        logger.error(`Error while deleting penalty-details for customerIds:(${customerIdString})`)
-        throw error
+  // penalty_details_fip
+  const deletePenaltyDetailsFip = async (customerIdString) => {
+    try {
+      logger.info(
+        `Initiating the deletion process from penalty details for customerId in (${customerIdString})`
+      );
+      const delst = await mysql.query(
+        `DELETE FROM penalty_details WHERE customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      return delst;
+    } catch (error) {
+      logger.error(
+        `Error while deleting penalty-details for customerIds:(${customerIdString})`
+      );
+      throw error;
     }
-  }
+  };
 
-  const getPenaltiesDetailsFip = async(customerIdString) => {
-    try{
-        const penalties = await mysql.query(`Select * from penalty_details_cl where customer_id in (${customerIdString})`, [], 'prod')
-        return penalties
-    }catch(error){
-        logger.error(`Error while fetching the penalty details for customerIds :(${customerIdString})`)
-        throw error
+  const getPenaltiesDetailsFip = async (customerIdString) => {
+    try {
+      const penalties = await mysql.query(
+        `Select * from penalty_details_cl where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      return penalties;
+    } catch (error) {
+      logger.error(
+        `Error while fetching the penalty details for customerIds :(${customerIdString})`
+      );
+      throw error;
     }
-  }
-
+  };
 
   const insertPenaltiesFip = async (data, customerIdString) => {
     try {
@@ -848,11 +766,10 @@ if (isMainThread) {
         `Initiating the insertion process in the penalty_details table`
       );
       const insertQuery = `INSERT INTO penalty_details (id, customer_id,loan_id,instalment_id,instalment_number,penalty_amount,penalty_date,penalty_received,penalty_received_date,outstanding_penalty,is_paid,panalty_type_id,payment_id,foreclose_status,status,create_date) VALUES ?`;
-      const penaltyArray = createPenaltyCompatibleArray(data, 'fip');
+      const penaltyArray = createPenaltyCompatibleArray(data, "fip");
       if (penaltyArray.length === 0) {
         logger.info(
-          "there are no penalties present to insert with the given loanIds:",
-          loanIds
+          "there are no penalties present to insert with the given loanIds:"
         );
         return true;
       }
@@ -871,26 +788,40 @@ if (isMainThread) {
   };
 
   // penalty_details_pif
-  const deletePenaltyDetailsPif = async(customerIdString) => {
-    try{
-        logger.info(`Initiating the deletion process from penalty_details_PIf for customerId in (${customerIdString})`)
-        const delst = await mysql.query(`DELETE FROM penalty_details_pif WHERE customer_id in (${customerIdString})`, [], 'prod')
-        return delst
-    }catch(error){
-        logger.error(`Error while deleting penalty-details for customerIds:(${customerIdString})`)
-        throw error
+  const deletePenaltyDetailsPif = async (customerIdString) => {
+    try {
+      logger.info(
+        `Initiating the deletion process from penalty_details_PIf for customerId in (${customerIdString})`
+      );
+      const delst = await mysql.query(
+        `DELETE FROM penalty_details_pif WHERE customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      return delst;
+    } catch (error) {
+      logger.error(
+        `Error while deleting penalty-details for customerIds:(${customerIdString})`
+      );
+      throw error;
     }
-  }
+  };
 
-  const getPenaltiesDetailsPif = async(customerIdString) => {
-    try{
-        const penalties = await mysql.query(`Select * from penalty_details_pif_cl where customer_id in (${customerIdString})`, [], 'prod')
-        return penalties
-    }catch(error){
-        logger.error(`Error while fetching the penalty details for customerIds :(${customerIdString})`)
-        throw error
+  const getPenaltiesDetailsPif = async (customerIdString) => {
+    try {
+      const penalties = await mysql.query(
+        `Select * from penalty_details_pif_cl where customer_id in (${customerIdString})`,
+        [],
+        "prod"
+      );
+      return penalties;
+    } catch (error) {
+      logger.error(
+        `Error while fetching the penalty details for customerIds :(${customerIdString})`
+      );
+      throw error;
     }
-  }
+  };
 
   const insertPenaltiesPif = async (data, customerIdString) => {
     try {
@@ -898,11 +829,10 @@ if (isMainThread) {
         `Initiating the insertion process in the penalty_details table`
       );
       const insertQuery = `INSERT INTO penalty_details_pif (id, customer_id,loan_id,instalment_id,instalment_number,penalty_amount,penalty_date,penalty_received,penalty_received_date,outstanding_penalty,is_paid,panalty_type_id,payment_id,foreclose_status,status,create_date) VALUES ?`;
-      const penaltyArray = createPenaltyCompatibleArray(data, 'pif');
+      const penaltyArray = createPenaltyCompatibleArray(data, "pif");
       if (penaltyArray.length === 0) {
         logger.info(
-          "there are no penalties present to insert with the given loanIds:",
-          loanIds
+          "there are no penalties present to insert with the given loanIds:"
         );
         return true;
       }
@@ -923,10 +853,12 @@ if (isMainThread) {
   const createPenaltyCompatibleArray = (penalties, flag) => {
     try {
       return penalties.map((penalty) => [
-        flag === 'pif' ?  penalty.id + 1000000000 : penalty.id + 20000000000000,
+        flag === "pif" ? penalty.id + 1000000000 : penalty.id + 20000000000000,
         penalty.customer_id,
         penalty.loan_id,
-        flag === 'pif' ? penalty.instalment_id + 1000000000: penalty.instalment_id + 20000000000000 ,
+        flag === "pif"
+          ? penalty.instalment_id + 1000000000
+          : penalty.instalment_id + 20000000000000,
         penalty.instalment_number,
         penalty.penalty_amount,
         penalty.penalty_date,
@@ -948,5 +880,3 @@ if (isMainThread) {
 
   processWorker();
 }
-
-
